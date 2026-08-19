@@ -18,7 +18,7 @@ jobs:
           # ограничить системные источники только amd64 (иначе apt ищет arm64 в security.ubuntu.com)
           sudo sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
           # добавить arm64-источники через ports.ubuntu.com
-          sudo printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports\nComponents: main restricted universe multiverse\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' | sudo tee /etc/apt/sources.list.d/arm64.sources
+          sudo printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports noble-security\nComponents: main restricted universe multiverse\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' | sudo tee /etc/apt/sources.list.d/arm64.sources
           sudo apt-get update
           sudo apt-get install -y \
             g++-aarch64-linux-gnu \
