@@ -12,26 +12,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install aarch64 cross-toolchain + SDL2
-        run: |
-          sudo dpkg --add-architecture arm64
-          # ограничить системные источники только amd64 (иначе apt ищет arm64 в security.ubuntu.com)
-          sudo sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
-          # добавить arm64-источники через ports.ubuntu.com
-          sudo printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports noble-security\nComponents: main restricted universe multiverse\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' | sudo tee /etc/apt/sources.list.d/arm64.sources
-          sudo apt-get update
-          sudo apt-get install -y \
-            g++-aarch64-linux-gnu \
-            libsdl2-dev:arm64
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - name: Cross-compile
+      - name: Build in arm64 container
         run: |
-          make -f Makefile.cross package
+          docker run --platform linux/arm64 --rm \
+            -v "${{ github.workspace }}:/work" -w /work \
+            ubuntu:24.04 bash -c '
+              set -e
+              apt-get update
+              apt-get install -y --no-install-recommends g++ make libsdl2-dev
+              make
+              make package
+              file r36pda-port/r36pda/r36pda
+            '
 
-      - name: Verify binary
+      - name: Verify artifact
         run: |
-          file r36pda-port/r36pda/r36pda
           ls -la r36pda-port/r36pda/
+          file r36pda-port/r36pda/r36pda
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
