@@ -22,7 +22,7 @@ jobs:
             ubuntu:24.04 bash -c '
               set -e
               apt-get update
-              apt-get install -y --no-install-recommends g++ make libsdl2-dev
+              apt-get install -y --no-install-recommends g++ make libsdl2-dev file
               make
               make package
               file r36pda-port/r36pda/r36pda
