@@ -1,0 +1,26 @@
+# r36pda — сборка на ПК (Windows + MinGW-w64 + SDL2)
+# Требуется: установленный MinGW-w64 и SDL2 (mingw32-make, g++).
+# Пути к SDL2 задайте переменными окружения или отредактируйте ниже.
+
+CXX      ?= g++
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+SDL2DIR  ?= C:/SDL2/SDL2-devel-2.30.6-mingw
+SDL_CFLAGS := -I$(SDL2DIR)/x86_64-w64-mingw32/include/SDL2 -Dmain=SDL_main
+SDL_LIBS   := -L$(SDL2DIR)/x86_64-w64-mingw32/lib -lmingw32 -lSDL2main -lSDL2 -mwindows
+
+SOURCES := src/main.cpp
+BIN     := r36pda.exe
+
+.PHONY: all clean run
+
+all: $(BIN)
+
+$(BIN): $(SOURCES)
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -o $@ $(SOURCES) $(SDL_LIBS)
+	@echo "Готово: $(BIN). Не забудьте скопировать SDL2.dll рядом с exe."
+
+run: $(BIN)
+	R36PDA_FULLSCREEN=0 ./$(BIN)
+
+clean:
+	rm -f $(BIN)

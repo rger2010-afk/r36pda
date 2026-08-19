@@ -1,0 +1,37 @@
+name: build r36pda
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install aarch64 cross-toolchain + SDL2
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++-aarch64-linux-gnu \
+            libsdl2-dev:arm64
+
+      - name: Cross-compile
+        run: |
+          make -f Makefile.cross package
+
+      - name: Verify binary
+        run: |
+          file r36pda-port/r36pda/r36pda
+          ls -la r36pda-port/r36pda/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r36pda-port
+          path: r36pda-port
+          if-no-files-found: error

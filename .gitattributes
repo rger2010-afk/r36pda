@@ -1,0 +1,13 @@
+* text=auto
+*.sh text eol=lf
+Makefile text eol=lf
+Makefile.cross text eol=lf
+Makefile.win text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.cfg text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.c text eol=lf

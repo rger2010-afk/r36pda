@@ -1,0 +1,34 @@
+# r36pda — кросскомпиляция под R36S (aarch64) для GitHub Actions.
+# Используется в .github/workflows/build.yml
+
+CXX      ?= aarch64-linux-gnu-g++
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+SDL_CFLAGS := -I/usr/aarch64-linux-gnu/include/SDL2
+SDL_LIBS   := -L/usr/aarch64-linux-gnu/lib -lSDL2
+
+SOURCES := src/main.cpp
+BIN     := r36pda
+PORT    := r36pda-port
+
+.PHONY: all clean package
+
+all: $(BIN)
+
+$(BIN): $(SOURCES)
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -o $@ $(SOURCES) $(SDL_LIBS)
+
+# Собирает самодостаточную папку-порт для копирования на SD-карту ArkOS.
+# Куда класть на SD: /roms/ports/r36pda/
+package: $(BIN)
+	rm -rf $(PORT)
+	mkdir -p $(PORT)/r36pda
+	cp $(BIN) $(PORT)/r36pda/
+	cp config/apps.cfg $(PORT)/r36pda/
+	cp -r apps $(PORT)/r36pda/
+	cp ports/r36pda.sh $(PORT)/r36pda/
+	chmod +x $(PORT)/r36pda/r36pda.sh $(PORT)/r36pda/apps/*.sh
+	@echo "Готово: $(PORT)/"
+
+clean:
+	rm -f $(BIN)
+	rm -rf $(PORT)
