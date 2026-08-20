@@ -262,7 +262,7 @@ static void render_calendar(Renderer &R, const char *clock, const char *batt) {
     for (int c = 0; c < 7; ++c)
         drawtext(R, wd[c], c * cw + (cw - textw(wd[c], 2)) / 2, gy, 2, rgb(140, 140, 160));
     int gy0 = gy + 22, ch = 52;
-    int off = (wday0(cal.year, cal.mon) + 6) % 7;   // понедельник первым
+    int off = (cal.wday0(cal.year, cal.mon) + 6) % 7;   // понедельник первым
     int days = cal.dim(cal.year, cal.mon);
     for (int i = 0; i < 42; ++i) {
         int r = i / 7, c = i % 7;
@@ -378,7 +378,8 @@ struct PaintState {
     void load() {
         FILE *f = fopen("paint.dat", "rb");
         if (!f) return;
-        fread(px.data(), 4, px.size(), f);
+        size_t got = fread(px.data(), 4, px.size(), f);
+        (void)got;
         fclose(f);
     }
 };

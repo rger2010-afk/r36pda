@@ -613,7 +613,7 @@ int main(int argc, char **argv) {
                         std::string key = k;
                         if (key == "space") editor.type(' ');
                         else if (key == "del") editor.backspace();
-                        else if (key == "enter") editor.enter_line();
+                        else if (key == "enter") editor.type('\n');
                         else if (key == "tab") { for (int i = 0; i < 4; ++i) editor.type(' '); }
                         else if (key == "abc") editor.kb.page = 1 - editor.kb.page;
                         else if (key == "shift") editor.kb.shift = !editor.kb.shift;
@@ -931,10 +931,7 @@ int main(int argc, char **argv) {
         case M_READER: {
             if (reader.reading) {
                 int line = (cy - (STATUS_H + 6)) / 16;
-                if (line >= 0) {
-                    int maxlines = (SCREEN_H - STATUS_H - 28) / 16;
-                    reader.pos = std::max(0, line);   // строка под курсором
-                }
+                if (line >= 0) reader.pos = std::max(0, line);   // строка под курсором
             } else {
                 int item = (cy - (STATUS_H + 8)) / 18;
                 if (item >= 0 && item < (int)reader.books.size()) reader.sel = item;
