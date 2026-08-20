@@ -10,6 +10,7 @@ struct TermState {
     std::vector<std::string> pending;
     std::mutex mtx;
     bool running = false;
+    bool exit_requested = false;
     std::vector<std::string> suggestions;
 
     void add_line(const std::string &s) {
@@ -43,7 +44,7 @@ struct TermState {
             for (auto &s : out) add_line(s);
             return;
         }
-        if (cmd == "exit") { /* обрабатывается в main */ return; }
+        if (cmd == "exit") { exit_requested = true; return; }
         start_shell(cmd);
     }
     void start_shell(const std::string &cmd) {

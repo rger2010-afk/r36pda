@@ -538,6 +538,7 @@ int main(int argc, char **argv) {
         }
 
         term.pump();
+        if (term.exit_requested) { term.exit_requested = false; mode = M_DESKTOP; }
 
         // Lua скрипт
 #ifdef USE_LUA

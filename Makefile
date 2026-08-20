@@ -11,7 +11,7 @@ ifeq ($(strip $(SDL_LIBS)),)
   SDL_LIBS   := -lSDL2
 endif
 # Встроенный Lua 5.3 (статически, чтобы не зависеть от системы)
-LUA_CFLAGS := -DUSE_LUA
+LUA_CFLAGS := -DUSE_LUA -I/usr/include/lua5.3
 LUA_LIBS   := -Wl,-Bstatic -llua5.3 -Wl,-Bdynamic -lm -ldl
 
 PREFIX ?= /home/ark
