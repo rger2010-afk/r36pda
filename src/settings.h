@@ -87,6 +87,8 @@ struct Settings {
         if (kb_scale < 1) kb_scale = 1;
         if (kb_scale > 3) kb_scale = 3;
     }
+    // полный сброс к заводским настройкам и сохранение
+    void reset() { defaults(); save(); }
     // лог событий (в debug.log рядом с бинарником)
     void log(const char *fmt, ...) {
         if (!log_enabled) return;

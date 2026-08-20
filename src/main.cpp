@@ -3,6 +3,7 @@
 // Встроенные приложения: терминал, FAR-файлы, система, процессы,
 // калькулятор, настройки, Lua-скрипты.
 #include "lua.h"
+#include "editor.h"
 
 // режимы и struct App — определены в app.h (включается через lua.h)
 static std::vector<App> load_external_apps(const std::string &path) {
@@ -40,6 +41,7 @@ static std::vector<App> builtin_apps() {
     a.name = "Processes"; a.mode = M_PROC;    a.color[0]=240; a.color[1]=90;  a.color[2]=90;  out.push_back(a);
     a.name = "Calculator";a.mode = M_CALC;    a.color[0]=255; a.color[1]=200; a.color[2]=80;  out.push_back(a);
     a.name = "Settings";  a.mode = M_SETTINGS; a.color[0]=170; a.color[1]=170; a.color[2]=180; out.push_back(a);
+    a.name = "Python";    a.mode = M_EDIT;    a.color[0]=60;  a.color[1]=130; a.color[2]=255; out.push_back(a);
     return out;
 }
 
@@ -241,7 +243,7 @@ struct SettingsUI {
         items = { "Кнопка A", "Кнопка B", "Кнопка Start", "Кнопка Select",
                   "Кнопка Fn", "Вверх", "Вниз", "Влево", "Вправо",
                   "Размер иконок", "Масштаб клавиатуры", "Лог debug.log",
-                  "Скорость курсора", "Цвет курсора" };
+                  "Скорость курсора", "Цвет курсора", "Сброс настроек" };
     }
 };
 
@@ -253,27 +255,32 @@ static void render_settings(Renderer &R, SettingsUI &UI, Settings &S, const char
         bool sel = (int)i == UI.item;
         std::string v;
         if (UI.remap == (int)i) v = "... нажми кнопку";
-        else if (i <= 8) v = std::to_string(S.btn[i]);
+        else if (i <= 8) {
+            char b[16];
+            snprintf(b, sizeof b, "код %d", S.btn[i]);
+            v = b;
+        }
         else if (i == 9) v = std::to_string(S.icon_size);
         else if (i == 10) v = std::to_string(S.kb_scale);
         else if (i == 11) v = S.log_enabled ? "вкл" : "выкл";
         else if (i == 12) v = std::to_string(S.cursor_speed);
-        else {
+        else if (i == 13) {
             char b[24];
             snprintf(b, sizeof b, "RGB(%d,%d,%d)", S.cur_r, S.cur_g, S.cur_b);
             v = b;
         }
+        else v = "A: сбросить";
         std::string line = UI.items[i] + ": " + v;
         if ((int)line.size() > 56) line = line.substr(0, 56);
         drawtext(R, line.c_str(), 8, y + (int)i * 18, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
         if (sel) fillrect(R, SCREEN_W - 8, y + (int)i * 18, 6, 14, rgb(255, 220, 60));
     }
-    const char *h = "A: изменить  B: back";
+    const char *h = "A: изменить  B: back  L/R: значение";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
     if (UI.remap >= 0) {
         fillrect(R, 140, 220, 360, 50, rgb(40, 40, 70));
-        drawtext(R, "Нажми любую кнопку на геймпаде", 156, 232, 2, rgb(255, 255, 255));
-        drawtext(R, "или Start чтобы отменить", 156, 252, 2, rgb(255, 200, 80));
+        drawtext(R, "Нажми нужную кнопку (B - отмена)", 156, 232, 2, rgb(255, 255, 255));
+        drawtext(R, "Код кнопки появится здесь", 156, 252, 2, rgb(255, 200, 80));
     }
 }
 
@@ -332,6 +339,7 @@ int main(int argc, char **argv) {
     FileState files;
     ProcState procs;
     CalcState calc;
+    EditState editor;
     SettingsUI su;
     std::vector<std::string> sysinfo;
     int sysinfo_scroll = 0;
@@ -358,6 +366,16 @@ int main(int argc, char **argv) {
             case SDL_JOYBUTTONDOWN: {
                 int b = ev.jbutton.button;
                 int act = gp_btn(S, b);   // 0..8 или -1
+
+                // настройки: режим переназначения — ловим любую кнопку
+                if (mode == M_SETTINGS && su.remap >= 0) {
+                    if (act == BTN_B) { su.remap = -1; break; }   // B = отмена
+                    S.btn[su.remap] = b;
+                    su.remap = -1;
+                    S.save();
+                    break;
+                }
+
                 bool x_click = false;
                 // крестик закрытия: нажатие A при курсоре на крестике
                 if (act == BTN_A && mode != M_DESKTOP && mode != M_EXTERNAL) {
@@ -377,14 +395,6 @@ int main(int argc, char **argv) {
                     break;
                 }
                 if (act < 0) break;
-
-                // настройки: режим переназначения
-                if (mode == M_SETTINGS && su.remap >= 0) {
-                    S.btn[su.remap] = b;
-                    su.remap = -1;
-                    S.save();
-                    break;
-                }
 
                 switch (mode) {
                 case M_DESKTOP: {
@@ -410,6 +420,7 @@ int main(int argc, char **argv) {
                                 if (mode == M_FILES) { files.refresh(); }
                                 if (mode == M_PROC) procs.refresh();
                                 if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
+                                if (mode == M_EDIT) { editor.reset("myapps/app.py"); }
 #ifdef USE_LUA
                                 if (mode == M_SCRIPT) lua_load_file(a.command);
 #endif
@@ -530,7 +541,10 @@ int main(int argc, char **argv) {
                 case M_SETTINGS:
                     if (act == BTN_UP) su.item = std::max(0, su.item - 1);
                     else if (act == BTN_DOWN) su.item = std::min((int)su.items.size() - 1, su.item + 1);
-                    else if (act == BTN_A) { if (su.item <= 8) su.remap = su.item; }
+                    else if (act == BTN_A) {
+                        if (su.item <= 8) su.remap = su.item;
+                        else if (su.item == 14) { S.reset(); su.item = 0; }
+                    }
                     else if (act == BTN_B) mode = M_DESKTOP;
                     else if (act == BTN_LEFT || act == BTN_RIGHT) {
                         int d = (act == BTN_RIGHT ? 1 : -1);
@@ -561,6 +575,29 @@ int main(int argc, char **argv) {
                     break;
 #endif
                 case M_EXTERNAL: break;
+                case M_EDIT:
+                    // D-pad двигает курсор в тексте, A/B вводят, Start/Select — меню
+                    if (act == BTN_UP) editor.mv(-1, 0);
+                    else if (act == BTN_DOWN) editor.mv(1, 0);
+                    else if (act == BTN_LEFT) editor.mv(0, -1);
+                    else if (act == BTN_RIGHT) editor.mv(0, 1);
+                    else if (act == BTN_A) {
+                        const char *k = editor.kb.cell_char();
+                        if (!k) break;
+                        std::string key = k;
+                        if (key == "space") editor.type(' ');
+                        else if (key == "del") editor.backspace();
+                        else if (key == "enter") editor.enter_line();
+                        else if (key == "tab") { for (int i = 0; i < 4; ++i) editor.type(' '); }
+                        else if (key == "abc") editor.kb.page = 1 - editor.kb.page;
+                        else if (key == "shift") editor.kb.shift = !editor.kb.shift;
+                        else if (key == "exit") mode = M_DESKTOP;
+                        else editor.type(key[0]);
+                    }
+                    else if (act == BTN_B) editor.backspace();
+                    else if (act == BTN_START) editor.run_python();
+                    else if (act == BTN_SELECT) editor.save();
+                    break;
                 }
                 break;
             }
@@ -585,7 +622,10 @@ int main(int argc, char **argv) {
                                 SDL_HideWindow(R.win);
                                 launch_and_wait(a.command);
                                 SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
-                            } else { mode = a.mode; }
+                            } else {
+                                mode = a.mode;
+                                if (mode == M_EDIT) editor.reset("myapps/app.py");
+                            }
                         }
                     }
                     else if (sym == SDLK_ESCAPE) running = false;
@@ -627,6 +667,68 @@ int main(int argc, char **argv) {
             if (sel >= (int)apps.size()) sel = (int)apps.size() - 1;
         }
 
+        // курсор (стик) ведёт выбор в каждом приложении
+        switch (mode) {
+        case M_TERM: {
+            // клавиатура: kb_h=202, y0=SCREEN_H-kb_h=278; 4 ряда букв + ряд функций
+            int kb_h = 4 * 42 + 34;
+            int y0 = SCREEN_H - kb_h;
+            if (cy >= y0 + 4) {
+                int row = (cy - y0 - 4) / 42;
+                int col = cx / 64;
+                if (row >= 0 && row <= 4 && col >= 0 && col < 10) {
+                    term.kb.row = row; term.kb.col = col;
+                    term.kb.clamp();
+                }
+            }
+            break;
+        }
+        case M_FILES: {
+            if (!files.input_active && files.menu < 0) {
+                // левая панель x<320, правая x>=320; строки по 16px от STATUS_H+22
+                Panel &p = files.cur();
+                if (!p.viewing) {
+                    int idx = (cy - (STATUS_H + 22)) / 16;
+                    int maxlines = (SCREEN_H - (STATUS_H + 22) - 24) / 16;
+                    int start = p.sel - maxlines / 2;
+                    if (start < 0) start = 0;
+                    int real = start + idx;
+                    if (real >= 0 && real < (int)p.entries.size()) p.sel = real;
+                }
+            }
+            break;
+        }
+        case M_CALC: {
+            int kw = 150, kh = 60;
+            int x0 = (SCREEN_W - 4 * kw) / 2;
+            int y0 = STATUS_H + 60;
+            if (cx >= x0 && cy >= y0) {
+                int c = (cx - x0) / kw, r = (cy - y0) / kh;
+                if (r >= 0 && r < 4 && c >= 0 && c < 4) { calc.brow = r; calc.bcol = c; }
+            }
+            break;
+        }
+        case M_SETTINGS: {
+            int item = (cy - (STATUS_H + 8)) / 18;
+            if (item >= 0 && item < (int)su.items.size()) su.item = item;
+            break;
+        }
+        case M_EDIT: {
+            int kb_h = 4 * 42 + 34;
+            int y0 = SCREEN_H - kb_h;
+            if (cy >= y0 + 4) {
+                int row = (cy - y0 - 4) / 42;
+                int col = cx / 64;
+                if (row >= 0 && row <= 4 && col >= 0 && col < 10) {
+                    editor.kb.row = row; editor.kb.col = col;
+                    editor.kb.clamp();
+                }
+            }
+            break;
+        }
+        default: break;
+        }
+
         term.pump();
         if (term.exit_requested) { term.exit_requested = false; mode = M_DESKTOP; }
 
@@ -647,6 +749,8 @@ int main(int argc, char **argv) {
         switch (mode) {
         case M_DESKTOP:
             render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
+            // курсор ведёт выбор: подвел стрелку — выделение переехало на неё
+            if (hover >= 0 && hover < (int)apps.size()) sel = hover;
             break;
         case M_TERM:
             render_term(R, term, clockbuf, battbuf, S);
@@ -688,6 +792,11 @@ int main(int argc, char **argv) {
 #endif
         case M_EXTERNAL:
             render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
+            if (hover >= 0 && hover < (int)apps.size()) sel = hover;
+            break;
+        case M_EDIT:
+            render_editor(R, editor, clockbuf, battbuf, S);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         }
 

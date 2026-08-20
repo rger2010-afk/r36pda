@@ -49,7 +49,8 @@ package: $(BIN)
 	cp $(BIN) $(PORT)/r36pda/
 	cp config/apps.cfg $(PORT)/r36pda/
 	cp -r scripts $(PORT)/r36pda/scripts 2>/dev/null || true
-	chmod +x $(PORT)/r36pda.sh $(PORT)/r36pda/scripts/*.lua 2>/dev/null || true
+	cp -r myapps $(PORT)/r36pda/myapps
+	chmod +x $(PORT)/r36pda.sh
 	@echo ""
 	@echo "Готово: $(PORT)/"
 	@echo "Скопируй содержимое $(PORT)/ в каталог /roms/ports/ на SD-карте:"
