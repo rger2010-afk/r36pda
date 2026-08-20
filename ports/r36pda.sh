@@ -17,8 +17,6 @@ export TERM=linux
 printf "\033c" > /dev/tty0 2>/dev/null
 printf "\033c" > /dev/tty1 2>/dev/null
 
-export SDL_VIDEODRIVER=fbcon
-export SDL_FBDEV=/dev/fb0
 export SDL_RENDER_DRIVER=software
 
 ./r36pda > "$LOG" 2>&1
