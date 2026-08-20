@@ -2,7 +2,7 @@
 #pragma once
 #include "settings.h"
 
-enum AppMode { M_DESKTOP, M_TERM, M_FILES, M_SYSINFO, M_PROC, M_CALC, M_SETTINGS, M_SCRIPT, M_EXTERNAL, M_EDIT };
+enum AppMode { M_DESKTOP, M_TERM, M_FILES, M_SYSINFO, M_PROC, M_CALC, M_SETTINGS, M_SCRIPT, M_EXTERNAL, M_EDIT, M_NOTES, M_CONTACTS, M_CALENDAR, M_TODO, M_PAINT, M_READER };
 
 struct App {
     std::string name;

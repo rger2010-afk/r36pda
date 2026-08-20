@@ -4,6 +4,7 @@
 // калькулятор, настройки, Lua-скрипты.
 #include "lua.h"
 #include "editor.h"
+#include "pda.h"
 
 // режимы и struct App — определены в app.h (включается через lua.h)
 static std::vector<App> load_external_apps(const std::string &path) {
@@ -42,6 +43,12 @@ static std::vector<App> builtin_apps() {
     a.name = "Calculator";a.mode = M_CALC;    a.color[0]=255; a.color[1]=200; a.color[2]=80;  out.push_back(a);
     a.name = "Settings";  a.mode = M_SETTINGS; a.color[0]=170; a.color[1]=170; a.color[2]=180; out.push_back(a);
     a.name = "Python";    a.mode = M_EDIT;    a.color[0]=60;  a.color[1]=130; a.color[2]=255; out.push_back(a);
+    a.name = "Notes";     a.mode = M_NOTES;   a.color[0]=255; a.color[1]=230; a.color[2]=100; out.push_back(a);
+    a.name = "Contacts";  a.mode = M_CONTACTS; a.color[0]=80;  a.color[1]=200; a.color[2]=120; out.push_back(a);
+    a.name = "Calendar";  a.mode = M_CALENDAR; a.color[0]=255; a.color[1]=120; a.color[2]=120; out.push_back(a);
+    a.name = "Tasks";     a.mode = M_TODO;    a.color[0]=120; a.color[1]=160; a.color[2]=255; out.push_back(a);
+    a.name = "Paint";     a.mode = M_PAINT;   a.color[0]=200; a.color[1]=120; a.color[2]=255; out.push_back(a);
+    a.name = "Reader";    a.mode = M_READER;  a.color[0]=140; a.color[1]=200; a.color[2]=140; out.push_back(a);
     return out;
 }
 
@@ -325,6 +332,7 @@ int main(int argc, char **argv) {
     for (auto &a : ext) apps.push_back(a);
 
     AppMode mode = M_DESKTOP;
+    AppMode g_back_mode = M_DESKTOP;   // куда возвращаться из Python-редактора
     int sel = 0;
     int hover = -1;
     bool running = true;
@@ -382,7 +390,11 @@ int main(int argc, char **argv) {
                     x_click = (cx >= SCREEN_W - 40 && cx <= SCREEN_W - 8 &&
                                cy >= 2 && cy <= 30);
                 }
-                if (x_click) { mode = M_DESKTOP; break; }
+                if (x_click) {
+                    mode = (mode == M_EDIT) ? g_back_mode : M_DESKTOP;
+                    if (mode == M_NOTES) notes.refresh();
+                    break;
+                }
                 if (act == BTN_FN) { fn_pressed = true; S.log("Fn down"); break; }
                 if (act == BTN_START && fn_pressed) {
                     // Fn+Start: в FAR открывает меню, в остальных — выход из программы
@@ -390,11 +402,19 @@ int main(int argc, char **argv) {
                     running = false; fn_pressed = false; break;
                 }
                 if (fn_pressed) {
-                    if (act == BTN_A || act == BTN_B) { if (mode != M_DESKTOP) mode = M_DESKTOP; }
+                    if (act == BTN_A || act == BTN_B) {
+                        if (mode != M_DESKTOP) {
+                            mode = (mode == M_EDIT) ? g_back_mode : M_DESKTOP;
+                            if (mode == M_NOTES) notes.refresh();
+                        }
+                    }
                     fn_pressed = false;
                     break;
                 }
                 if (act < 0) break;
+
+                // общий диалог ввода (КПК-приложения)
+                if (inp_on) { inp_handle(act); break; }
 
                 switch (mode) {
                 case M_DESKTOP: {
@@ -420,7 +440,13 @@ int main(int argc, char **argv) {
                                 if (mode == M_FILES) { files.refresh(); }
                                 if (mode == M_PROC) procs.refresh();
                                 if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
-                                if (mode == M_EDIT) { editor.reset("myapps/app.py"); }
+                                if (mode == M_EDIT) { editor.reset("myapps/app.py"); g_back_mode = M_DESKTOP; }
+                                if (mode == M_NOTES) { notes.refresh(); }
+                                if (mode == M_CONTACTS) { contacts.load(); contacts.clamp(); }
+                                if (mode == M_CALENDAR) { cal.refresh(); }
+                                if (mode == M_TODO) { todo.load(); todo.clamp(); }
+                                if (mode == M_PAINT) { paint.init(); }
+                                if (mode == M_READER) { reader.refresh(); }
 #ifdef USE_LUA
                                 if (mode == M_SCRIPT) lua_load_file(a.command);
 #endif
@@ -591,12 +617,129 @@ int main(int argc, char **argv) {
                         else if (key == "tab") { for (int i = 0; i < 4; ++i) editor.type(' '); }
                         else if (key == "abc") editor.kb.page = 1 - editor.kb.page;
                         else if (key == "shift") editor.kb.shift = !editor.kb.shift;
-                        else if (key == "exit") mode = M_DESKTOP;
+                        else if (key == "exit") { mode = g_back_mode; if (mode == M_NOTES) notes.refresh(); }
                         else editor.type(key[0]);
                     }
                     else if (act == BTN_B) editor.backspace();
                     else if (act == BTN_START) editor.run_python();
                     else if (act == BTN_SELECT) editor.save();
+                    break;
+                case M_NOTES:
+                    if (act == BTN_UP) notes.sel = std::max(0, notes.sel - 1);
+                    else if (act == BTN_DOWN) notes.sel = std::min((int)notes.files.size() - 1, notes.sel + 1);
+                    else if (act == BTN_A) {
+                        if (!notes.files.empty()) {
+                            editor.reset(notes.files[notes.sel]);
+                            g_back_mode = M_NOTES; mode = M_EDIT;
+                        }
+                    }
+                    else if (act == BTN_SELECT) {
+                        editor.reset(notes.new_path());
+                        g_back_mode = M_NOTES; mode = M_EDIT;
+                    }
+                    else if (act == BTN_LEFT || act == BTN_RIGHT) { notes.del_sel(); }
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_CONTACTS:
+                    if (contacts.viewing) {
+                        if (act == BTN_UP) contacts.field = std::max(0, contacts.field - 1);
+                        else if (act == BTN_DOWN) contacts.field = std::min(3, contacts.field + 1);
+                        else if (act == BTN_A) {
+                            if (!contacts.cs.empty()) {
+                                int tgt = contacts.field;
+                                inp_open(CONTACT_FIELD[tgt], tgt, []() {
+                                    contacts.cs[contacts.sel].f[inp_target] = inp_val;
+                                    contacts.save();
+                                });
+                            }
+                        }
+                        else if (act == BTN_B) contacts.viewing = false;
+                    } else {
+                        if (act == BTN_UP) contacts.sel = std::max(0, contacts.sel - 1);
+                        else if (act == BTN_DOWN) contacts.sel = std::min((int)contacts.cs.size() - 1, contacts.sel + 1);
+                        else if (act == BTN_A) { contacts.field = 0; contacts.viewing = true; }
+                        else if (act == BTN_SELECT) {
+                            contacts.cs.push_back(Contact());
+                            contacts.sel = (int)contacts.cs.size() - 1;
+                            contacts.field = 0;
+                            contacts.viewing = true;
+                            inp_open("Имя", 0, []() {
+                                contacts.cs[contacts.sel].f[inp_target] = inp_val;
+                                contacts.save();
+                            });
+                        }
+                        else if (act == BTN_LEFT || act == BTN_RIGHT) {
+                            if (!contacts.cs.empty()) {
+                                contacts.cs.erase(contacts.cs.begin() + contacts.sel);
+                                contacts.clamp(); contacts.save();
+                            }
+                        }
+                        else if (act == BTN_B) mode = M_DESKTOP;
+                    }
+                    break;
+                case M_CALENDAR:
+                    if (act == BTN_UP) { cal.day_sel -= 7; cal.clamp_day(); }
+                    else if (act == BTN_DOWN) { cal.day_sel += 7; cal.clamp_day(); }
+                    else if (act == BTN_LEFT) { cal.day_sel -= 1; cal.clamp_day(); }
+                    else if (act == BTN_RIGHT) { cal.day_sel += 1; cal.clamp_day(); }
+                    else if (act == BTN_A) {
+                        std::string k = cal.key(cal.year, cal.mon, cal.day_sel);
+                        inp_open("Событие", 0, [k]() {
+                            cal.ev[k].push_back(inp_val);
+                            cal.save();
+                        });
+                    }
+                    else if (act == BTN_SELECT) cal.month_shift(-1);
+                    else if (act == BTN_START) cal.month_shift(1);
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_TODO:
+                    if (act == BTN_UP) todo.sel = std::max(0, todo.sel - 1);
+                    else if (act == BTN_DOWN) todo.sel = std::min((int)todo.items.size() - 1, todo.sel + 1);
+                    else if (act == BTN_A) {
+                        if (!todo.items.empty()) { todo.items[todo.sel].first = !todo.items[todo.sel].first; todo.save(); }
+                    }
+                    else if (act == BTN_SELECT) {
+                        inp_open("Задача", 0, []() {
+                            todo.items.push_back({ false, inp_val });
+                            todo.save();
+                        });
+                    }
+                    else if (act == BTN_LEFT || act == BTN_RIGHT) {
+                        if (!todo.items.empty()) {
+                            todo.items.erase(todo.items.begin() + todo.sel);
+                            todo.clamp(); todo.save();
+                        }
+                    }
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_PAINT:
+                    if (act == BTN_A) {
+                        paint.pen_down = !paint.pen_down;
+                        paint.lx = cx; paint.ly = cy;
+                    }
+                    else if (act == BTN_LEFT) paint.color_idx = (paint.color_idx + 7) % 8;
+                    else if (act == BTN_RIGHT) paint.color_idx = (paint.color_idx + 1) % 8;
+                    else if (act == BTN_SELECT) paint.clear();
+                    else if (act == BTN_START) paint.save();
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_READER:
+                    if (reader.reading) {
+                        if (act == BTN_UP) reader.pos -= 3;
+                        else if (act == BTN_DOWN) reader.pos += 3;
+                        else if (act == BTN_LEFT) reader.pos -= 24;
+                        else if (act == BTN_RIGHT) reader.pos += 24;
+                        else if (act == BTN_SELECT) reader.close();
+                        else if (act == BTN_B) reader.close();
+                    } else {
+                        if (act == BTN_UP) reader.sel = std::max(0, reader.sel - 1);
+                        else if (act == BTN_DOWN) reader.sel = std::min((int)reader.books.size() - 1, reader.sel + 1);
+                        else if (act == BTN_A) {
+                            if (!reader.books.empty()) reader.open(reader.sel);
+                        }
+                        else if (act == BTN_B) mode = M_DESKTOP;
+                    }
                     break;
                 }
                 break;
@@ -624,7 +767,13 @@ int main(int argc, char **argv) {
                                 SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
                             } else {
                                 mode = a.mode;
-                                if (mode == M_EDIT) editor.reset("myapps/app.py");
+                                if (mode == M_EDIT) { editor.reset("myapps/app.py"); g_back_mode = M_DESKTOP; }
+                                if (mode == M_NOTES) notes.refresh();
+                                if (mode == M_CONTACTS) { contacts.load(); contacts.clamp(); }
+                                if (mode == M_CALENDAR) { cal.refresh(); }
+                                if (mode == M_TODO) { todo.load(); todo.clamp(); }
+                                if (mode == M_PAINT) { paint.init(); }
+                                if (mode == M_READER) { reader.refresh(); }
                             }
                         }
                     }
@@ -662,13 +811,27 @@ int main(int argc, char **argv) {
             }
         }
 
+        // диалог ввода живёт только внутри КПК-приложения
+        if (mode == M_DESKTOP) inp_on = false;
+
         if (!apps.empty()) {
             if (sel < 0) sel = 0;
             if (sel >= (int)apps.size()) sel = (int)apps.size() - 1;
         }
 
         // курсор (стик) ведёт выбор в каждом приложении
-        switch (mode) {
+        if (inp_on) {
+            int kb_h = 4 * 42 + 34;
+            int y0 = SCREEN_H - kb_h;
+            if (cy >= y0 + 4) {
+                int row = (cy - y0 - 4) / 42;
+                int col = cx / 64;
+                if (row >= 0 && row <= 4 && col >= 0 && col < 10) {
+                    inp_kb.row = row; inp_kb.col = col;
+                    inp_kb.clamp();
+                }
+            }
+        } else switch (mode) {
         case M_TERM: {
             // клавиатура: kb_h=202, y0=SCREEN_H-kb_h=278; 4 ряда букв + ряд функций
             int kb_h = 4 * 42 + 34;
@@ -723,6 +886,58 @@ int main(int argc, char **argv) {
                     editor.kb.row = row; editor.kb.col = col;
                     editor.kb.clamp();
                 }
+            }
+            break;
+        }
+        case M_NOTES: {
+            int item = (cy - (STATUS_H + 8)) / 18;
+            if (item >= 0 && item < (int)notes.files.size()) notes.sel = item;
+            break;
+        }
+        case M_CONTACTS: {
+            if (contacts.viewing) {
+                int f = (cy - (STATUS_H + 12)) / 18;
+                if (f >= 0 && f < 4) contacts.field = f;
+            } else {
+                int item = (cy - (STATUS_H + 8)) / 18;
+                if (item >= 0 && item < (int)contacts.cs.size()) contacts.sel = item;
+            }
+            break;
+        }
+        case M_CALENDAR: {
+            int gy0 = STATUS_H + 52;
+            if (cy >= gy0) {
+                int r = (cy - gy0) / 52, c = cx / (SCREEN_W / 7);
+                if (r >= 0 && r < 6 && c >= 0 && c < 7) {
+                    int off = (cal.wday0(cal.year, cal.mon) + 6) % 7;
+                    int day = r * 7 + c + 1 - off;
+                    if (day >= 1 && day <= cal.dim(cal.year, cal.mon)) cal.day_sel = day;
+                }
+            }
+            break;
+        }
+        case M_TODO: {
+            int item = (cy - (STATUS_H + 8)) / 18;
+            if (item >= 0 && item < (int)todo.items.size()) todo.sel = item;
+            break;
+        }
+        case M_PAINT: {
+            if (paint.pen_down) {
+                paint.line(paint.lx, paint.ly, cx, cy, PAINT_PAL[paint.color_idx]);
+                paint.lx = cx; paint.ly = cy;
+            }
+            break;
+        }
+        case M_READER: {
+            if (reader.reading) {
+                int line = (cy - (STATUS_H + 6)) / 16;
+                if (line >= 0) {
+                    int maxlines = (SCREEN_H - STATUS_H - 28) / 16;
+                    reader.pos = std::max(0, line);   // строка под курсором
+                }
+            } else {
+                int item = (cy - (STATUS_H + 8)) / 18;
+                if (item >= 0 && item < (int)reader.books.size()) reader.sel = item;
             }
             break;
         }
@@ -798,7 +1013,34 @@ int main(int argc, char **argv) {
             render_editor(R, editor, clockbuf, battbuf, S);
             draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
+        case M_NOTES:
+            render_notes(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_CONTACTS:
+            render_contacts(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_CALENDAR:
+            render_calendar(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_TODO:
+            render_todo(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_PAINT:
+            render_paint(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_READER:
+            render_reader(R, clockbuf, battbuf);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
         }
+
+        // диалог ввода поверх
+        if (inp_on) render_input(R, S);
 
         // курсор в приложениях (на рабочем столе рисуется внутри render_desktop)
         if (mode != M_DESKTOP && mode != M_EXTERNAL)

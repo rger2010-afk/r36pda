@@ -110,6 +110,6 @@ static void render_editor(Renderer &R, EditState &E, const char *clock, const ch
         }
     }
     draw_keyboard(R, E.kb, SCREEN_H - kb_h, S);
-    const char *h = "A:key B:del Start:run Select:save Tab:newline";
+    const char *h = "A:key B:del Start:run Select:save";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, area_bottom - 12, 2, rgb(120, 120, 135));
 }

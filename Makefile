@@ -50,6 +50,8 @@ package: $(BIN)
 	cp config/apps.cfg $(PORT)/r36pda/
 	cp -r scripts $(PORT)/r36pda/scripts 2>/dev/null || true
 	cp -r myapps $(PORT)/r36pda/myapps
+	cp -r notes $(PORT)/r36pda/notes
+	cp -r books $(PORT)/r36pda/books
 	chmod +x $(PORT)/r36pda.sh
 	@echo ""
 	@echo "Готово: $(PORT)/"
