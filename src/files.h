@@ -1,5 +1,6 @@
 // files.h — FAR-подобный двухпанельный файловый менеджер.
 #pragma once
+#include <cerrno>
 #include "term.h"
 
 struct Panel {
@@ -81,6 +82,15 @@ struct FileState {
     std::string msg;
     bool confirm_delete = false;
     std::string confirm_name;
+    // F9-меню действий (как в FAR)
+    int menu = -1;       // активный пункт меню или -1
+    // ввод имени для rename/mkdir
+    bool input_active = false;
+    std::string input_label;
+    std::string input_val;
+    int input_target = 0;   // 0=rename, 1=mkdir
+    std::string input_old;
+    Kbd kb;
 
     Panel &cur() { return focus == 0 ? left : right; }
     Panel &oth() { return focus == 0 ? right : left; }
@@ -103,6 +113,38 @@ struct FileState {
         fclose(in); fclose(out);
         msg = "скопировано: " + e.first;
         o.refresh();
+    }
+    void cmd_move() {
+        Panel &c = cur(), &o = oth();
+        if (c.sel < 0 || c.sel >= (int)c.entries.size()) return;
+        auto &e = c.entries[c.sel];
+        std::string src = path_join(c.cwd, e.first);
+        std::string dst = path_join(o.cwd, e.first);
+        if (rename(src.c_str(), dst.c_str()) == 0) {
+            msg = "перемещено: " + e.first;
+            c.refresh(); o.refresh();
+        } else msg = "move: не удалось (" + std::string(strerror(errno)) + ")";
+    }
+    void cmd_mkdir() {
+        if (input_val.empty()) return;
+        std::string full = path_join(cur().cwd, input_val);
+        if (mkdir(full.c_str(), 0755) == 0) {
+            msg = "папка создана: " + input_val;
+            cur().refresh();
+        } else msg = "mkdir: " + std::string(strerror(errno));
+        input_active = false;
+    }
+    void cmd_rename() {
+        if (input_val.empty()) return;
+        Panel &c = cur();
+        if (c.sel < 0 || c.sel >= (int)c.entries.size()) return;
+        std::string src = path_join(c.cwd, c.entries[c.sel].first);
+        std::string dst = path_join(c.cwd, input_val);
+        if (rename(src.c_str(), dst.c_str()) == 0) {
+            msg = "переименовано: " + input_val;
+            c.refresh();
+        } else msg = "rename: " + std::string(strerror(errno));
+        input_active = false;
     }
     void cmd_delete() {
         Panel &c = cur();
@@ -153,14 +195,49 @@ static void render_panel(Renderer &R, Panel &p, int x, int w, bool focused) {
     }
 }
 
-static void render_files(Renderer &R, FileState &F, const char *clock, const char *batt) {
+static void render_files(Renderer &R, FileState &F, const char *clock, const char *batt, const Settings &S) {
     fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
     draw_statusbar(R, clock, batt, "FAR Files");
     if (!F.msg.empty()) drawtext(R, F.msg.c_str(), 8, STATUS_H - 1, 2, rgb(255, 150, 90));
+
+    if (F.input_active) {
+        // оверлей ввода имени (rename / mkdir) — как диалог в FAR
+        draw_keyboard(R, F.kb, STATUS_H + 64, S);
+        fillrect(R, 0, STATUS_H, SCREEN_W, 60, rgb(30, 30, 55));
+        drawtext(R, F.input_label.c_str(), 8, STATUS_H + 4, 2, rgb(255, 220, 60));
+        std::string v = F.input_val + "_";
+        if ((int)v.size() > 55) v = v.substr(0, 55);
+        drawtext(R, v.c_str(), 8, STATUS_H + 24, 2, rgb(255, 255, 255));
+        return;
+    }
+
+    if (F.menu >= 0) {
+        // F9-меню действий
+        fillrect(R, 180, 80, 280, 160, rgb(40, 40, 70));
+        drawtext(R, "  F9: Menu", 190, 88, 2, rgb(255, 220, 60));
+        const char *items[] = { "F3 Просмотр", "F5 Копировать", "F6 Переместить",
+                                "F7 Создать папку", "F8 Удалить", "F2 Переименовать" };
+        int y = 112;
+        for (int i = 0; i < 6; ++i) {
+            bool sel = (F.menu == i);
+            drawtext(R, items[i], 190, y + i * 22, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
+            if (sel) fillrect(R, 460, y + i * 22, 6, 14, rgb(255, 220, 60));
+        }
+        drawtext(R, "A: ok  B: close  arrows: move", 190, 216, 2, rgb(140, 140, 160));
+        return;
+    }
+
     render_panel(R, F.left, 0, SCREEN_W / 2, F.focus == 0);
     render_panel(R, F.right, SCREEN_W / 2, SCREEN_W / 2, F.focus == 1);
-    const char *h = "A:open B:up Sel:panel Start:copy Fn:del X:exit";
-    drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 135));
+
+    // строка F-клавиш как в FAR
+    const char *fkeys[10] = { "F1 Help", "F2 Ren", "F3 View", "F4 Edit", "F5 Copy",
+                              "F6 Move", "F7 MkDir", "F8 Del", "F9 Menu", "F10 Quit" };
+    fillrect(R, 0, SCREEN_H - 18, SCREEN_W, 18, rgb(0, 0, 0));
+    for (int i = 0; i < 10; ++i) {
+        bool sel = (i == 4 && F.focus != -999); // подсветка доступных
+        drawtext(R, fkeys[i], 4 + i * 62, SCREEN_H - 16, 1, sel ? rgb(255, 220, 60) : rgb(150, 150, 165));
+    }
 
     if (F.confirm_delete) {
         fillrect(R, 150, 200, 340, 60, rgb(70, 25, 25));

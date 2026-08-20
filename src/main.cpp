@@ -1,10 +1,10 @@
-﻿// r36pda вЂ” PDA-РґРµСЃРєС‚РѕРї РґР»СЏ R36S (ArkOS) Рё РґР»СЏ С‚РµСЃС‚Р° РЅР° РџРљ.
-// C++17 + SDL2 + Lua 5.3. Р‘РµР· РІРЅРµС€РЅРёС… GUI-Р±РёР±Р»РёРѕС‚РµРє.
-// Р’СЃС‚СЂРѕРµРЅРЅС‹Рµ РїСЂРёР»РѕР¶РµРЅРёСЏ: С‚РµСЂРјРёРЅР°Р», FAR-С„Р°Р№Р»С‹, СЃРёСЃС‚РµРјР°, РїСЂРѕС†РµСЃСЃС‹,
-// РєР°Р»СЊРєСѓР»СЏС‚РѕСЂ, РЅР°СЃС‚СЂРѕР№РєРё, Lua-СЃРєСЂРёРїС‚С‹.
+// r36pda — PDA-десктоп для R36S (ArkOS) и для теста на ПК.
+// C++17 + SDL2 + Lua 5.3. Без внешних GUI-библиотек.
+// Встроенные приложения: терминал, FAR-файлы, система, процессы,
+// калькулятор, настройки, Lua-скрипты.
 #include "lua.h"
 
-// СЂРµР¶РёРјС‹ Рё struct App вЂ” РѕРїСЂРµРґРµР»РµРЅС‹ РІ app.h (РІРєР»СЋС‡Р°РµС‚СЃСЏ С‡РµСЂРµР· lua.h)
+// режимы и struct App — определены в app.h (включается через lua.h)
 static std::vector<App> load_external_apps(const std::string &path) {
     std::vector<App> out;
     FILE *f = fopen(path.c_str(), "r");
@@ -43,7 +43,7 @@ static std::vector<App> builtin_apps() {
     return out;
 }
 
-// ----------------------------- РёРєРѕРЅРєРё -----------------------------
+// ----------------------------- иконки -----------------------------
 static void drawicon(Renderer &R, const App &a, int x, int y, int sz, bool sel) {
     Uint32 base = rgb(a.color[0], a.color[1], a.color[2]);
     if (sel) base = rgb(255, 255, 255);
@@ -76,18 +76,18 @@ static void drawlabel(Renderer &R, const std::string &name, int x, int y, int w,
     drawtext(R, t.c_str(), x, y, s, c);
 }
 
-// ----------------------------- РєСѓСЂСЃРѕСЂ-СЃС‚СЂРµР»РєР° -----------------------------
-static void draw_cursor(Renderer &R, int cx, int cy) {
+// ----------------------------- курсор-стрелка -----------------------------
+static void draw_cursor(Renderer &R, int cx, int cy, Uint32 col) {
     for (int i = 0; i < 7; ++i) {
-        putpx(R, cx + i, cy, rgb(255, 255, 255));
-        putpx(R, cx, cy + i, rgb(255, 255, 255));
-        putpx(R, cx + i, cy + i, rgb(255, 255, 255));
+        putpx(R, cx + i, cy, col);
+        putpx(R, cx, cy + i, col);
+        putpx(R, cx + i, cy + i, col);
     }
-    fillrect(R, cx, cy, 6, 6, rgb(255, 255, 0));
+    fillrect(R, cx, cy, 6, 6, col);
 }
 
-// ----------------------------- РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ -----------------------------
-// РІРѕР·РІСЂР°С‰Р°РµС‚ true, РµСЃР»Рё РєСѓСЂСЃРѕСЂ РЅР°Рґ РєСЂРµСЃС‚РёРєРѕРј
+// ----------------------------- крестик закрытия -----------------------------
+// возвращает true, если курсор над крестиком
 static bool draw_close(Renderer &R, int cx, int cy, int x, int y) {
     fillrect(R, x, y, 20, 20, rgb(120, 30, 30));
     drawtext(R, "x", x + 5, y + 3, 2, rgb(255, 255, 255));
@@ -96,7 +96,7 @@ static bool draw_close(Renderer &R, int cx, int cy, int x, int y) {
     return over;
 }
 
-// ----------------------------- СЌРєСЂР°РЅС‹ -----------------------------
+// ----------------------------- экраны -----------------------------
 static void render_desktop(Renderer &R, const std::vector<App> &apps, int sel,
                            int cx, int cy, const char *clock, const char *batt,
                            const Settings &S, int &hover) {
@@ -126,7 +126,7 @@ static void render_desktop(Renderer &R, const std::vector<App> &apps, int sel,
         drawicon(R, apps[i], x, y, sz, selb);
         drawlabel(R, apps[i].name, x - 10, y + sz + 3, sz + 20, 2, selb);
     }
-    draw_cursor(R, cx, cy);
+    draw_cursor(R, cx, cy, rgb(S.cur_r, S.cur_g, S.cur_b));
     const char *h = "A: run  stick: cursor  Select+Start: quit";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(110, 110, 125));
 }
@@ -136,13 +136,13 @@ static void render_term(Renderer &R, TermState &T, const char *clock, const char
     draw_statusbar(R, clock, batt, "Terminal");
     int kb_h = 4 * 42 + 34;
     int area_bottom = SCREEN_H - kb_h - 2;
-    // РїРѕРґСЃРєР°Р·РєРё
+    // подсказки
     if (!T.suggestions.empty()) {
         std::string sug;
         for (auto &s : T.suggestions) { sug += s; sug += " "; }
         if ((int)sug.size() > 60) sug = sug.substr(0, 60);
         drawtext(R, sug.c_str(), 8, area_bottom - 40, 2, rgb(140, 220, 255));
-        drawtext(R, "Tab: РґРѕРїРѕР»РЅРёС‚СЊ", 8, area_bottom - 22, 2, rgb(120, 120, 135));
+        drawtext(R, "Tab: дополнить", 8, area_bottom - 22, 2, rgb(120, 120, 135));
     }
     int line_h = 16;
     int maxlines = (area_bottom - STATUS_H - 4) / line_h;
@@ -232,15 +232,16 @@ static void render_calc(Renderer &R, CalcState &C, const char *clock, const char
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
 }
 
-// ----------------------------- РЅР°СЃС‚СЂРѕР№РєРё -----------------------------
+// ----------------------------- настройки -----------------------------
 struct SettingsUI {
     int item = 0;
-    int remap = -1;    // РєР°РєРѕР№ РїСѓРЅРєС‚ РїРµСЂРµРЅР°Р·РЅР°С‡Р°РµРј (-1=РЅРµС‚)
+    int remap = -1;    // какой пункт переназначаем (-1=нет)
     std::vector<std::string> items;
     SettingsUI() {
-        items = { "РљРЅРѕРїРєР° A", "РљРЅРѕРїРєР° B", "РљРЅРѕРїРєР° Start", "РљРЅРѕРїРєР° Select",
-                  "РљРЅРѕРїРєР° Fn", "Р’РІРµСЂС…", "Р’РЅРёР·", "Р’Р»РµРІРѕ", "Р’РїСЂР°РІРѕ",
-                  "Р Р°Р·РјРµСЂ РёРєРѕРЅРѕРє", "РњР°СЃС€С‚Р°Р± РєР»Р°РІРёР°С‚СѓСЂС‹", "Р›РѕРі debug.log" };
+        items = { "Кнопка A", "Кнопка B", "Кнопка Start", "Кнопка Select",
+                  "Кнопка Fn", "Вверх", "Вниз", "Влево", "Вправо",
+                  "Размер иконок", "Масштаб клавиатуры", "Лог debug.log",
+                  "Скорость курсора", "Цвет курсора" };
     }
 };
 
@@ -251,26 +252,32 @@ static void render_settings(Renderer &R, SettingsUI &UI, Settings &S, const char
     for (size_t i = 0; i < UI.items.size(); ++i) {
         bool sel = (int)i == UI.item;
         std::string v;
-        if (UI.remap == (int)i) v = "... РЅР°Р¶РјРё РєРЅРѕРїРєСѓ";
+        if (UI.remap == (int)i) v = "... нажми кнопку";
         else if (i <= 8) v = std::to_string(S.btn[i]);
         else if (i == 9) v = std::to_string(S.icon_size);
         else if (i == 10) v = std::to_string(S.kb_scale);
-        else v = S.log_enabled ? "РІРєР»" : "РІС‹РєР»";
+        else if (i == 11) v = S.log_enabled ? "вкл" : "выкл";
+        else if (i == 12) v = std::to_string(S.cursor_speed);
+        else {
+            char b[24];
+            snprintf(b, sizeof b, "RGB(%d,%d,%d)", S.cur_r, S.cur_g, S.cur_b);
+            v = b;
+        }
         std::string line = UI.items[i] + ": " + v;
         if ((int)line.size() > 56) line = line.substr(0, 56);
         drawtext(R, line.c_str(), 8, y + (int)i * 18, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
         if (sel) fillrect(R, SCREEN_W - 8, y + (int)i * 18, 6, 14, rgb(255, 220, 60));
     }
-    const char *h = "A: РёР·РјРµРЅРёС‚СЊ  B: back";
+    const char *h = "A: изменить  B: back";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
     if (UI.remap >= 0) {
         fillrect(R, 140, 220, 360, 50, rgb(40, 40, 70));
-        drawtext(R, "РќР°Р¶РјРё Р»СЋР±СѓСЋ РєРЅРѕРїРєСѓ РЅР° РіРµР№РјРїР°РґРµ", 156, 232, 2, rgb(255, 255, 255));
-        drawtext(R, "РёР»Рё Start С‡С‚РѕР±С‹ РѕС‚РјРµРЅРёС‚СЊ", 156, 252, 2, rgb(255, 200, 80));
+        drawtext(R, "Нажми любую кнопку на геймпаде", 156, 232, 2, rgb(255, 255, 255));
+        drawtext(R, "или Start чтобы отменить", 156, 252, 2, rgb(255, 200, 80));
     }
 }
 
-// ----------------------------- РІРІРѕРґ -----------------------------
+// ----------------------------- ввод -----------------------------
 static int gp_btn(Settings &S, int b) {
     for (int i = 0; i < BTN_MAX; ++i) if (S.btn[i] == b) return i;
     return -1;
@@ -301,7 +308,7 @@ int main(int argc, char **argv) {
     S.load();
     S.log("=== r36pda start ===");
 
-    // РїСЂРёР»РѕР¶РµРЅРёСЏ
+    // приложения
     std::vector<App> apps = builtin_apps();
 #ifdef USE_LUA
     for (auto &a : lua_apps()) apps.push_back(a);
@@ -340,8 +347,9 @@ int main(int argc, char **argv) {
 
             case SDL_JOYAXISMOTION: {
                 int ax = ev.jaxis.axis, v = ev.jaxis.value;
-                if (ax == S.axis_x) cx += v / (S.axis_thresh / 4);
-                else if (ax == S.axis_y) cy += v / (S.axis_thresh / 4);
+                int step = S.axis_thresh / 4 / std::max(1, S.cursor_speed);
+                if (ax == S.axis_x) cx += v / std::max(1, step);
+                else if (ax == S.axis_y) cy += v / std::max(1, step);
                 if (cx < 0) cx = 0; if (cx >= SCREEN_W) cx = SCREEN_W - 1;
                 if (cy < 0) cy = 0; if (cy >= SCREEN_H) cy = SCREEN_H - 1;
                 break;
@@ -349,16 +357,20 @@ int main(int argc, char **argv) {
 
             case SDL_JOYBUTTONDOWN: {
                 int b = ev.jbutton.button;
-                int act = gp_btn(S, b);   // 0..8 РёР»Рё -1
+                int act = gp_btn(S, b);   // 0..8 или -1
                 bool x_click = false;
-                // РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ: РЅР°Р¶Р°С‚РёРµ A РїСЂРё РєСѓСЂСЃРѕСЂРµ РЅР° РєСЂРµСЃС‚РёРєРµ
+                // крестик закрытия: нажатие A при курсоре на крестике
                 if (act == BTN_A && mode != M_DESKTOP && mode != M_EXTERNAL) {
                     x_click = (cx >= SCREEN_W - 40 && cx <= SCREEN_W - 8 &&
                                cy >= 2 && cy <= 30);
                 }
                 if (x_click) { mode = M_DESKTOP; break; }
                 if (act == BTN_FN) { fn_pressed = true; S.log("Fn down"); break; }
-                if (act == BTN_START && fn_pressed) { running = false; fn_pressed = false; break; }
+                if (act == BTN_START && fn_pressed) {
+                    // Fn+Start: в FAR открывает меню, в остальных — выход из программы
+                    if (mode == M_FILES) { files.menu = 0; fn_pressed = false; break; }
+                    running = false; fn_pressed = false; break;
+                }
                 if (fn_pressed) {
                     if (act == BTN_A || act == BTN_B) { if (mode != M_DESKTOP) mode = M_DESKTOP; }
                     fn_pressed = false;
@@ -366,7 +378,7 @@ int main(int argc, char **argv) {
                 }
                 if (act < 0) break;
 
-                // РЅР°СЃС‚СЂРѕР№РєРё: СЂРµР¶РёРј РїРµСЂРµРЅР°Р·РЅР°С‡РµРЅРёСЏ
+                // настройки: режим переназначения
                 if (mode == M_SETTINGS && su.remap >= 0) {
                     S.btn[su.remap] = b;
                     su.remap = -1;
@@ -394,7 +406,7 @@ int main(int argc, char **argv) {
                                 SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
                             } else {
                                 mode = a.mode; sel = 0;
-                                if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); term.lines.clear(); term.add_line("Р’РІРµРґРё РєРѕРјР°РЅРґСѓ. Tab - РґРѕРїРѕР»РЅРµРЅРёРµ, Select - РїРѕРґСЃРєР°Р·РєР°."); }
+                                if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); term.lines.clear(); term.add_line("Введи команду. Tab - дополнение, Select - подсказка."); }
                                 if (mode == M_FILES) { files.refresh(); }
                                 if (mode == M_PROC) procs.refresh();
                                 if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
@@ -429,6 +441,63 @@ int main(int argc, char **argv) {
                     else if (act == BTN_SELECT) term.update_suggestions();
                     break;
                 case M_FILES:
+                    if (files.input_active) {
+                        // ввод имени через клавиатуру
+                        if (act == BTN_UP) files.kb.move(-1, 0);
+                        else if (act == BTN_DOWN) files.kb.move(1, 0);
+                        else if (act == BTN_LEFT) files.kb.move(0, -1);
+                        else if (act == BTN_RIGHT) files.kb.move(0, 1);
+                        else if (act == BTN_A || act == BTN_B) {
+                            const char *k = files.kb.cell_char();
+                            if (!k) break;
+                            std::string key = k;
+                            if (key == "space") files.input_val += ' ';
+                            else if (key == "del") { if (!files.input_val.empty()) files.input_val.pop_back(); }
+                            else if (key == "enter") {
+                                if (files.input_target == 0) files.cmd_rename();
+                                else files.cmd_mkdir();
+                            }
+                            else if (key == "abc") files.kb.page = 1 - files.kb.page;
+                            else if (key == "shift") files.kb.shift = !files.kb.shift;
+                            else if (key == "exit") { files.input_active = false; files.input_val.clear(); }
+                            else files.input_val += key;
+                        }
+                        else if (act == BTN_START) {
+                            if (files.input_target == 0) files.cmd_rename();
+                            else files.cmd_mkdir();
+                        }
+                        break;
+                    }
+                    if (files.menu >= 0) {
+                        if (act == BTN_UP) files.menu = std::max(0, files.menu - 1);
+                        else if (act == BTN_DOWN) files.menu = std::min(5, files.menu + 1);
+                        else if (act == BTN_B) files.menu = -1;
+                        else if (act == BTN_A) {
+                            int m = files.menu;
+                            files.menu = -1;
+                            if (m == 0) { /* F3 просмотр */ files.cur().enter(); }
+                            else if (m == 1) { /* F2 rename */
+                                if (files.cur().sel >= 0 && files.cur().sel < (int)files.cur().entries.size()) {
+                                    files.input_label = "Переименовать в:";
+                                    files.input_val = files.cur().entries[files.cur().sel].first;
+                                    files.input_target = 0;
+                                    files.input_active = true;
+                                    files.kb = Kbd();
+                                }
+                            }
+                            else if (m == 2) files.cmd_copy();
+                            else if (m == 3) files.cmd_move();
+                            else if (m == 4) {
+                                files.input_label = "Создать папку:";
+                                files.input_val = "";
+                                files.input_target = 1;
+                                files.input_active = true;
+                                files.kb = Kbd();
+                            }
+                            else if (m == 5) files.cmd_delete();
+                        }
+                        break;
+                    }
                     if (act == BTN_UP) { Panel &p = files.cur(); if (p.viewing) p.vscroll = std::max(0, p.vscroll - 1); else if (p.sel > 0) --p.sel; }
                     else if (act == BTN_DOWN) { Panel &p = files.cur(); if (p.viewing) p.vscroll = std::min((int)p.view.size(), p.vscroll + 1); else if (p.sel < (int)p.entries.size() - 1) ++p.sel; }
                     else if (act == BTN_LEFT) files.focus = 0;
@@ -464,9 +533,23 @@ int main(int argc, char **argv) {
                     else if (act == BTN_A) { if (su.item <= 8) su.remap = su.item; }
                     else if (act == BTN_B) mode = M_DESKTOP;
                     else if (act == BTN_LEFT || act == BTN_RIGHT) {
-                        if (su.item == 9) { S.icon_size += (act == BTN_RIGHT ? 8 : -8); S.save(); }
-                        else if (su.item == 10) { S.kb_scale += (act == BTN_RIGHT ? 1 : -1); S.save(); }
+                        int d = (act == BTN_RIGHT ? 1 : -1);
+                        if (su.item == 9) { S.icon_size += d * 8; S.save(); }
+                        else if (su.item == 10) { S.kb_scale += d; S.save(); }
                         else if (su.item == 11) { S.log_enabled = !S.log_enabled; S.save(); }
+                        else if (su.item == 12) { S.cursor_speed = std::max(1, std::min(10, S.cursor_speed + d)); S.save(); }
+                        else if (su.item == 13) {
+                            // цвет: циклируем по палитре
+                            static const int pal[][3] = {
+                                {255,255,0},{255,0,0},{0,255,0},{0,200,255},
+                                {255,120,0},{255,0,255},{0,255,255},{255,255,255}
+                            };
+                            int idx = 0; for (int k = 0; k < 8; ++k)
+                                if (pal[k][0]==S.cur_r && pal[k][1]==S.cur_g && pal[k][2]==S.cur_b) idx = k;
+                            idx = (idx + d + 8) % 8;
+                            S.cur_r = pal[idx][0]; S.cur_g = pal[idx][1]; S.cur_b = pal[idx][2];
+                            S.save();
+                        }
                     }
                     break;
 #ifdef USE_LUA
@@ -547,7 +630,7 @@ int main(int argc, char **argv) {
         term.pump();
         if (term.exit_requested) { term.exit_requested = false; mode = M_DESKTOP; }
 
-        // Lua СЃРєСЂРёРїС‚
+        // Lua скрипт
 #ifdef USE_LUA
         if (mode == M_SCRIPT) {
             lua_frame();
@@ -560,7 +643,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        // РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ РІ РїСЂРёР»РѕР¶РµРЅРёСЏС… (РєСЂРѕРјРµ СЂР°Р±РѕС‡РµРіРѕ СЃС‚РѕР»Р°)
+        // крестик закрытия в приложениях (кроме рабочего стола)
         switch (mode) {
         case M_DESKTOP:
             render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
@@ -570,7 +653,7 @@ int main(int argc, char **argv) {
             draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_FILES:
-            render_files(R, files, clockbuf, battbuf);
+            render_files(R, files, clockbuf, battbuf, S);
             draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_SYSINFO:
@@ -599,7 +682,6 @@ int main(int argc, char **argv) {
                 if ((int)s.size() > 58) s = s.substr(0, 58);
                 drawtext(R, s.c_str(), 8, y + (int)i * 16, 2, rgb(220, 220, 220));
             }
-            draw_cursor(R, cx, cy);
             draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         }
@@ -609,7 +691,11 @@ int main(int argc, char **argv) {
             break;
         }
 
-        // A РїРѕ РєСЂРµСЃС‚РёРєСѓ = РІС‹С…РѕРґ РёР· РїСЂРёР»РѕР¶РµРЅРёСЏ (РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ РІ SDL_JOYBUTTONDOWN)
+        // курсор в приложениях (на рабочем столе рисуется внутри render_desktop)
+        if (mode != M_DESKTOP && mode != M_EXTERNAL)
+            draw_cursor(R, cx, cy, rgb(S.cur_r, S.cur_g, S.cur_b));
+
+        // A по крестику = выход из приложения (обрабатывается в SDL_JOYBUTTONDOWN)
 
         SDL_UnlockTexture(R.fb);
         SDL_RenderCopy(R.ren, R.fb, nullptr, nullptr);

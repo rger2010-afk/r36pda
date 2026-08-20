@@ -11,7 +11,7 @@ LOG="$GAMEDIR/log.txt"
 cd "$GAMEDIR" || exit 1
 
 chmod 666 /dev/tty0 /dev/tty1 /dev/uinput /dev/fb0 2>/dev/null
-chmod +x ./r36pda ./apps/*.sh 2>/dev/null
+chmod +x ./r36pda ./scripts/*.lua 2>/dev/null
 
 export TERM=linux
 printf "\033c" > /dev/tty0 2>/dev/null

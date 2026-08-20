@@ -170,6 +170,7 @@ static std::vector<App> lua_apps() {
         a.name = n.substr(0, n.size() - 4);
         a.mode = M_SCRIPT;
         a.script = "scripts/" + n;
+        a.command = a.script;   // запуск через lua_load_file(a.command)
         a.color[0] = 150; a.color[1] = 200; a.color[2] = 255;
         out.push_back(a);
     }
