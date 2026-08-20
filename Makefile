@@ -3,7 +3,7 @@
 #   make && make install
 
 CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -pthread
 SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL_LIBS   := $(shell sdl2-config --libs 2>/dev/null)
 ifeq ($(strip $(SDL_LIBS)),)
