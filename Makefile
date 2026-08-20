@@ -10,6 +10,9 @@ ifeq ($(strip $(SDL_LIBS)),)
   SDL_CFLAGS :=
   SDL_LIBS   := -lSDL2
 endif
+# Встроенный Lua 5.3 (статически, чтобы не зависеть от системы)
+LUA_CFLAGS := -DUSE_LUA
+LUA_LIBS   := -Wl,-Bstatic -llua5.3 -Wl,-Bdynamic -lm -ldl
 
 PREFIX ?= /home/ark
 DEST   := $(PREFIX)/r36pda
@@ -23,7 +26,7 @@ BIN     := r36pda
 all: $(BIN)
 
 $(BIN): $(SOURCES)
-	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -o $@ $(SOURCES) $(SDL_LIBS)
+	$(CXX) $(CXXFLAGS) $(LUA_CFLAGS) $(SDL_CFLAGS) -o $@ $(SOURCES) $(SDL_LIBS) $(LUA_LIBS)
 
 install: $(BIN)
 	mkdir -p $(DEST)
@@ -45,8 +48,8 @@ package: $(BIN)
 	cp ports/r36pda.sh $(PORT)/r36pda.sh
 	cp $(BIN) $(PORT)/r36pda/
 	cp config/apps.cfg $(PORT)/r36pda/
-	cp -r apps $(PORT)/r36pda/
-	chmod +x $(PORT)/r36pda.sh $(PORT)/r36pda/apps/*.sh
+	cp -r scripts $(PORT)/r36pda/scripts 2>/dev/null || true
+	chmod +x $(PORT)/r36pda.sh $(PORT)/r36pda/scripts/*.lua 2>/dev/null || true
 	@echo ""
 	@echo "Готово: $(PORT)/"
 	@echo "Скопируй содержимое $(PORT)/ в каталог /roms/ports/ на SD-карте:"

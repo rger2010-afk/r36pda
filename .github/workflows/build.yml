@@ -23,7 +23,7 @@ jobs:
             ubuntu:20.04 bash -c '
               set -e
               apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30
-              apt-get install -y --no-install-recommends g++ make libsdl2-dev file
+              apt-get install -y --no-install-recommends g++ make libsdl2-dev file liblua5.3-dev
               make clean
               make
               make package

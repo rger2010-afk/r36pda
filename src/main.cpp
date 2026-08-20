@@ -1,56 +1,10 @@
 // r36pda — PDA-десктоп для R36S (ArkOS) и для теста на ПК.
-// C++17 + SDL2. Без внешних библиотек: встроенный шрифт font.h.
-// Встроенные приложения: терминал с экранной клавиатурой, файлы,
-// системная информация, процессы, калькулятор. Всё работает без X11.
+// C++17 + SDL2 + Lua 5.3. Без внешних GUI-библиотек.
+// Встроенные приложения: терминал, FAR-файлы, система, процессы,
+// калькулятор, настройки, Lua-скрипты.
+#include "lua.h"
 
-#include <SDL.h>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include <thread>
-#include <mutex>
-#include "font.h"
-
-#ifdef _WIN32
-  #include <windows.h>
-  #include <process.h>
-  #include <direct.h>
-  #define GETCWD _getcwd
-  #define POPEN _popen
-  #define PCLOSE _pclose
-  #define ISDIR(st) (0)
-#else
-  #include <unistd.h>
-  #include <sys/wait.h>
-  #include <sys/stat.h>
-  #include <dirent.h>
-  #define GETCWD getcwd
-  #define POPEN popen
-  #define PCLOSE pclose
-  #define ISDIR(st) S_ISDIR((st).st_mode)
-#endif
-
-#define SCREEN_W 640
-#define SCREEN_H 480
-#define STATUS_H 28
-#define MARGIN 24
-#define ICON_SLOT 152
-#define LABEL_H 26
-
-enum Mode { M_DESKTOP, M_TERM, M_FILES, M_SYSINFO, M_PROC, M_CALC, M_EXTERNAL };
-
-struct App {
-    std::string name;
-    Mode mode = M_DESKTOP;
-    std::string command;
-    Uint8 color[3] = {80, 180, 230};
-};
-
-// внешние команды из config/apps.cfg: имя | команда | R,G,B
+// режимы и struct App — определены в app.h (включается через lua.h)
 static std::vector<App> load_external_apps(const std::string &path) {
     std::vector<App> out;
     FILE *f = fopen(path.c_str(), "r");
@@ -85,126 +39,11 @@ static std::vector<App> builtin_apps() {
     a.name = "System";    a.mode = M_SYSINFO; a.color[0]=100; a.color[1]=200; a.color[2]=200; out.push_back(a);
     a.name = "Processes"; a.mode = M_PROC;    a.color[0]=240; a.color[1]=90;  a.color[2]=90;  out.push_back(a);
     a.name = "Calculator";a.mode = M_CALC;    a.color[0]=255; a.color[1]=200; a.color[2]=80;  out.push_back(a);
+    a.name = "Settings";  a.mode = M_SETTINGS; a.color[0]=170; a.color[1]=170; a.color[2]=180; out.push_back(a);
     return out;
 }
 
-struct Renderer {
-    SDL_Window *win = nullptr;
-    SDL_Renderer *ren = nullptr;
-    SDL_Texture *fb = nullptr;
-    Uint32 *pix = nullptr;
-    int pitch = 0;
-    SDL_Joystick *joy = nullptr;
-};
-
-static Uint32 rgb(Uint8 r, Uint8 g, Uint8 b) {
-    return ((Uint32)r << 16) | ((Uint32)g << 8) | b;
-}
-
-static void putpx(Renderer &R, int x, int y, Uint32 c) {
-    if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
-    R.pix[y * (R.pitch / 4) + x] = c;
-}
-
-static void fillrect(Renderer &R, int x, int y, int w, int h, Uint32 c) {
-    if (w <= 0 || h <= 0) return;
-    for (int yy = y; yy < y + h; ++yy)
-        for (int xx = x; xx < x + w; ++xx)
-            putpx(R, xx, yy, c);
-}
-
-static void drawtext(Renderer &R, const char *str, int x, int y, int s, Uint32 c) {
-    const unsigned char *p = (const unsigned char *)str;
-    int cx = x;
-    while (*p) {
-        int len = 0;
-        int cp = utf8_decode(p, &len);
-        const Glyph *g = font_glyph(cp);
-        if (g) {
-            for (int r = 0; r < 7; ++r) {
-                for (int b = 0; b < 5; ++b) {
-                    if ((g->r[r] >> (4 - b)) & 1) {
-                        for (int dy = 0; dy < s; ++dy)
-                            for (int dx = 0; dx < s; ++dx)
-                                putpx(R, cx + b * s + dx, y + r * s + dy, c);
-                    }
-                }
-            }
-            cx += 5 * s + s;
-        } else {
-            cx += 5 * s + s;
-        }
-        p += len;
-    }
-}
-
-static int textw(const char *str, int s) {
-    int w = 0;
-    const unsigned char *p = (const unsigned char *)str;
-    while (*p) {
-        int len = 0;
-        utf8_decode(p, &len);
-        w += 5 * s + s;
-        p += len;
-    }
-    return w;
-}
-
-static void draw_statusbar(Renderer &R, const char *clock, const char *batt, const char *title) {
-    fillrect(R, 0, 0, SCREEN_W, STATUS_H, rgb(30, 30, 45));
-    drawtext(R, clock, 8, (STATUS_H - 14) / 2, 2, rgb(255, 255, 255));
-    if (title) {
-        int tw = textw(title, 2);
-        drawtext(R, title, (SCREEN_W - tw) / 2, (STATUS_H - 14) / 2, 2, rgb(200, 200, 210));
-    }
-    std::string bt = std::string("BAT ") + batt;
-    int bw = textw(bt.c_str(), 2);
-    drawtext(R, bt.c_str(), SCREEN_W - 8 - bw, (STATUS_H - 14) / 2, 2, rgb(120, 255, 120));
-    fillrect(R, 0, STATUS_H - 2, SCREEN_W, 2, rgb(60, 60, 90));
-}
-
-static void read_battery(char *out, size_t n) {
-#ifdef _WIN32
-    snprintf(out, n, "--");
-#else
-    struct stat st;
-    if (stat("/sys/class/power_supply", &st) == 0) {
-        DIR *d = opendir("/sys/class/power_supply");
-        if (d) {
-            struct dirent *e;
-            while ((e = readdir(d))) {
-                if (e->d_name[0] == '.') continue;
-                char p[256];
-                snprintf(p, sizeof p, "/sys/class/power_supply/%s/capacity", e->d_name);
-                FILE *f = fopen(p, "r");
-                if (f) {
-                    char buf[16];
-                    if (fgets(buf, sizeof buf, f)) {
-                        for (char *q = buf; *q; ++q) if (*q == '\n' || *q == '\r') { *q = 0; break; }
-                        snprintf(out, n, "%s%%", buf);
-                        fclose(f); closedir(d); return;
-                    }
-                    fclose(f);
-                }
-            }
-            closedir(d);
-        }
-    }
-    snprintf(out, n, "AC");
-#endif
-}
-
-static void read_clock(char *out, size_t n) {
-    time_t t = time(nullptr);
-    struct tm tmv;
-#ifdef _WIN32
-    localtime_s(&tmv, &t);
-#else
-    localtime_r(&t, &tmv);
-#endif
-    strftime(out, n, "%H:%M", &tmv);
-}
-
+// ----------------------------- иконки -----------------------------
 static void drawicon(Renderer &R, const App &a, int x, int y, int sz, bool sel) {
     Uint32 base = rgb(a.color[0], a.color[1], a.color[2]);
     if (sel) base = rgb(255, 255, 255);
@@ -223,9 +62,7 @@ static void drawicon(Renderer &R, const App &a, int x, int y, int sz, bool sel) 
         int n = 0; const unsigned char *q = (const unsigned char *)a.name.c_str();
         while (n < len) { buf[n] = (char)q[n]; ++n; }
         buf[n] = 0;
-    } else {
-        buf[0] = '?'; buf[1] = 0;
-    }
+    } else { buf[0] = '?'; buf[1] = 0; }
     int ls = sz / 8 > 1 ? sz / 8 : 2;
     int tw = textw(buf, ls);
     drawtext(R, buf, x + (sz - tw) / 2, y + (sz - 7 * ls) / 2, ls, sel ? rgb(0,0,0) : rgb(255,255,255));
@@ -239,451 +76,89 @@ static void drawlabel(Renderer &R, const std::string &name, int x, int y, int w,
     drawtext(R, t.c_str(), x, y, s, c);
 }
 
-static void launch_and_wait(const std::string &cmd) {
-#ifdef _WIN32
-    system(cmd.c_str());
-#else
-    pid_t pid = fork();
-    if (pid == 0) {
-        execl("/bin/sh", "sh", "-c", cmd.c_str(), (char *)nullptr);
-        _exit(127);
-    } else if (pid > 0) {
-        int st;
-        waitpid(pid, &st, 0);
+// ----------------------------- курсор-стрелка -----------------------------
+static void draw_cursor(Renderer &R, int cx, int cy) {
+    for (int i = 0; i < 7; ++i) {
+        putpx(R, cx + i, cy, rgb(255, 255, 255));
+        putpx(R, cx, cy + i, rgb(255, 255, 255));
+        putpx(R, cx + i, cy + i, rgb(255, 255, 255));
     }
-#endif
+    fillrect(R, cx, cy, 6, 6, rgb(255, 255, 0));
 }
 
-static void run_cmd_lines(const std::string &cmd, std::vector<std::string> &out) {
-    FILE *p = POPEN((cmd + " 2>&1").c_str(), "r");
-    if (!p) { out.push_back("popen failed"); return; }
-    char buf[1024];
-    while (fgets(buf, sizeof buf, p)) {
-        std::string s = buf;
-        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-        out.push_back(s);
-    }
-    PCLOSE(p);
+// ----------------------------- крестик закрытия -----------------------------
+// возвращает true, если курсор над крестиком
+static bool draw_close(Renderer &R, int cx, int cy, int x, int y) {
+    fillrect(R, x, y, 20, 20, rgb(120, 30, 30));
+    drawtext(R, "x", x + 5, y + 3, 2, rgb(255, 255, 255));
+    bool over = cx >= x && cx <= x + 20 && cy >= y && cy <= y + 20;
+    if (over) fillrect(R, x - 1, y - 1, 22, 22, rgb(255, 220, 60));
+    return over;
 }
 
-// ----------------------------- экранная клавиатура -----------------------------
-static const char *KB_PAGE0[4] = {
-    "qwertyuiop",
-    "asdfghjkl",
-    "zxcvbnm,.?",
-    "1234567890",
-};
-static const char *KB_PAGE1[4] = {
-    "!@#$%^&*()",
-    "[]{}<>;:'\"",
-    "-_=+\\|/~`",
-    "1234567890",
-};
-static const char *KB_FUNC[6] = { "space", "shift", "del", "enter", "abc", "exit" };
-
-struct Kbd {
-    int row = 0, col = 0;
-    int page = 0;
-    bool shift = false;
-    const char *cell_char() const {
-        if (row < 4) {
-            const char *r = page == 0 ? KB_PAGE0[row] : KB_PAGE1[row];
-            if (col < 0 || col >= (int)strlen(r)) return nullptr;
-            static char b[2];
-            char ch = r[col];
-            if (row < 3 && page == 0 && shift && ch >= 'a' && ch <= 'z') b[0] = (char)(ch - 32);
-            else b[0] = ch;
-            b[1] = 0;
-            return b;
-        }
-        if (col < 0 || col >= 6) return nullptr;
-        return KB_FUNC[col];
-    }
-    void clamp() {
-        if (row < 0) row = 0;
-        if (row > 4) row = 4;
-        if (row < 4) {
-            const char *r = page == 0 ? KB_PAGE0[row] : KB_PAGE1[row];
-            int n = (int)strlen(r);
-            if (col >= n) col = n - 1;
-        } else {
-            if (col >= 6) col = 5;
-        }
-        if (col < 0) col = 0;
-    }
-    void move(int dr, int dc) { row += dr; col += dc; clamp(); }
-};
-
-static void draw_keyboard(Renderer &R, const Kbd &kb, int y0) {
-    fillrect(R, 0, y0, SCREEN_W, SCREEN_H - y0, rgb(24, 24, 34));
-    int kw = SCREEN_W / 10;
-    int kh = 34;
-    for (int r = 0; r < 4; ++r) {
-        const char *line = kb.page == 0 ? KB_PAGE0[r] : KB_PAGE1[r];
-        int n = (int)strlen(line);
-        for (int c = 0; c < n; ++c) {
-            int x = c * kw;
-            int y = y0 + 6 + r * (kh + 6);
-            char ch = line[c];
-            bool sel = kb.row == r && kb.col == c;
-            Uint32 col = sel ? rgb(255, 220, 60) : rgb(60, 60, 80);
-            fillrect(R, x + 2, y, kw - 4, kh - 4, col);
-            char b[2] = { ch, 0 };
-            if (r < 3 && kb.page == 0 && kb.shift && ch >= 'a' && ch <= 'z') b[0] = (char)(ch - 32);
-            drawtext(R, b, x + (kw - textw(b, 2)) / 2, y + (kh - 14) / 2, 2, sel ? rgb(0,0,0) : rgb(230,230,230));
-        }
-    }
-    int fx[6] = { 4, 154, 244, 364, 484, 564 };
-    for (int c = 0; c < 6; ++c) {
-        int x = fx[c];
-        int y = y0 + 6 + 4 * (kh + 6);
-        bool sel = kb.row == 4 && kb.col == c;
-        Uint32 col = sel ? rgb(255, 220, 60) : rgb(80, 80, 100);
-        fillrect(R, x, y, 128, kh, col);
-        drawtext(R, KB_FUNC[c], x + (128 - textw(KB_FUNC[c], 2)) / 2, y + (kh - 14) / 2, 2, sel ? rgb(0,0,0) : rgb(230,230,230));
-    }
-}
-
-// ----------------------------- терминал -----------------------------
-struct TermState {
-    std::vector<std::string> lines;
-    std::string input;
-    Kbd kb;
-    std::thread *worker = nullptr;
-    std::vector<std::string> pending;
-    std::mutex mtx;
-    bool running = false;
-    const char *prompt = "$ ";
-
-    void add_line(const std::string &s) {
-        if (lines.size() > 300) lines.erase(lines.begin());
-        lines.push_back(s);
-    }
-    void start_cmd(const std::string &cmd) {
-        if (running) return;
-        add_line(std::string(prompt) + cmd);
-        input.clear();
-        std::string c = cmd;
-        running = true;
-        worker = new std::thread([this, c]() {
-            FILE *p = POPEN((c + " 2>&1").c_str(), "r");
-            if (!p) { std::lock_guard<std::mutex> l(mtx); pending.push_back("popen failed"); }
-            else {
-                char buf[1024];
-                while (fgets(buf, sizeof buf, p)) {
-                    std::string s = buf;
-                    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-                    std::lock_guard<std::mutex> l(mtx);
-                    pending.push_back(s);
-                }
-                PCLOSE(p);
-            }
-            running = false;
-        });
-    }
-    void pump() {
-        if (worker) {
-            std::vector<std::string> got;
-            { std::lock_guard<std::mutex> l(mtx); got.swap(pending); }
-            for (auto &s : got) add_line(s);
-            if (!running) { worker->join(); delete worker; worker = nullptr; }
-        }
-    }
-};
-
-// ----------------------------- файлы -----------------------------
-struct FileState {
-    std::string cwd = "/";
-    std::vector<std::pair<std::string, bool>> entries;
-    int sel = 0;
-    bool viewing = false;
-    std::string viewname;
-    std::vector<std::string> view;
-    int vscroll = 0;
-    std::string msg;
-
-    void refresh() {
-        entries.clear();
-        sel = 0;
-#ifdef _WIN32
-        cwd = std::string(GETCWD(nullptr, 0));
-#endif
-        DIR *d = opendir(cwd.c_str());
-        if (!d) { msg = "cannot open dir"; return; }
-        std::vector<std::pair<std::string, bool>> tmp;
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            std::string name = e->d_name;
-            if (name == ".") continue;
-            bool isd = false;
-#ifndef _WIN32
-            if (e->d_type == DT_DIR) isd = true;
-            else if (e->d_type == DT_UNKNOWN) {
-                struct stat st;
-                std::string full = cwd + (cwd == "/" ? "" : "/") + name;
-                if (stat(full.c_str(), &st) == 0) isd = ISDIR(st);
-            }
-#endif
-            tmp.push_back({name, isd});
-        }
-        closedir(d);
-        std::sort(tmp.begin(), tmp.end(), [](const auto &a, const auto &b) {
-            if (a.second != b.second) return a.second > b.second;
-            return a.first < b.first;
-        });
-        entries = tmp;
-        msg.clear();
-    }
-    void enter() {
-        if (sel < 0 || sel >= (int)entries.size()) return;
-        auto &e = entries[sel];
-        if (e.second) {
-            cwd = (cwd == "/" ? "" : cwd) + "/" + e.first;
-            refresh();
-        } else {
-            open_preview(e.first);
-        }
-    }
-    void up() {
-        if (viewing) { viewing = false; return; }
-        if (cwd == "/") return;
-        size_t p = cwd.rfind('/');
-        if (p == std::string::npos) cwd = "/";
-        else if (p == 0) cwd = "/";
-        else cwd = cwd.substr(0, p);
-        refresh();
-    }
-    void open_preview(const std::string &fname) {
-        std::string full = cwd + (cwd == "/" ? "" : "/") + fname;
-        FILE *f = fopen(full.c_str(), "rb");
-        if (!f) { msg = "cannot open file"; return; }
-        char buf[32768];
-        size_t n = fread(buf, 1, sizeof buf, f);
-        fclose(f);
-        view.clear();
-        bool binary = n > 0 && memchr(buf, 0, n) != nullptr;
-        if (binary) {
-            view.push_back("(binary file, " + std::to_string((int)n) + " bytes)");
-        } else {
-            std::string acc;
-            for (size_t i = 0; i < n; ++i) {
-                if (buf[i] == '\n') { view.push_back(acc); acc.clear(); }
-                else acc += buf[i];
-            }
-            if (!acc.empty()) view.push_back(acc);
-        }
-        viewname = fname;
-        vscroll = 0;
-        viewing = true;
-    }
-};
-
-// ----------------------------- процессы -----------------------------
-struct ProcState {
-    std::vector<std::pair<int, std::string>> procs;
-    int sel = 0;
-    int confirm = -1;
-    std::string msg;
-
-    void refresh() {
-        procs.clear();
-        sel = 0;
-#ifdef _WIN32
-        procs.push_back({0, "no /proc on windows"});
-        return;
-#else
-        DIR *d = opendir("/proc");
-        if (!d) return;
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            std::string n = e->d_name;
-            if (n.empty() || n.find_first_not_of("0123456789") != std::string::npos) continue;
-            int pid = atoi(n.c_str());
-            std::string comm = "?";
-            char p[256];
-            snprintf(p, sizeof p, "/proc/%d/comm", pid);
-            FILE *f = fopen(p, "r");
-            if (f) {
-                char b[128];
-                if (fgets(b, sizeof b, f)) {
-                    for (char *q = b; *q; ++q) if (*q == '\n' || *q == '\r') { *q = 0; break; }
-                    comm = b;
-                }
-                fclose(f);
-            }
-            procs.push_back({pid, comm});
-        }
-        closedir(d);
-        std::sort(procs.begin(), procs.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
-#endif
-    }
-    void do_kill() {
-        if (confirm <= 0) return;
-#ifdef _WIN32
-        msg = "no kill on windows";
-#else
-        std::vector<std::string> out;
-        run_cmd_lines("kill -9 " + std::to_string(confirm) + " 2>&1", out);
-        msg = out.empty() ? "sent" : out[0];
-#endif
-        confirm = -1;
-        refresh();
-    }
-};
-
-// ----------------------------- калькулятор -----------------------------
-struct CalcState {
-    double acc = 0, cur = 0;
-    int op = 0;
-    bool fresh = true;
-    std::string disp = "0";
-    int brow = 0, bcol = 0;
-
-    void digit(int d) {
-        if (fresh) { cur = 0; fresh = false; }
-        cur = cur * 10 + d;
-        update();
-    }
-    void apply_op(int newop) {
-        if (!fresh) { compute(); fresh = true; }
-        op = newop;
-        update();
-    }
-    void compute() {
-        switch (op) {
-            case 1: acc = acc + cur; break;
-            case 2: acc = acc - cur; break;
-            case 3: acc = acc * cur; break;
-            case 4: acc = (cur != 0) ? acc / cur : 0; break;
-            default: acc = cur; break;
-        }
-        op = 0;
-    }
-    void equals() {
-        if (!fresh) { compute(); fresh = true; }
-        update();
-    }
-    void clear() { acc = 0; cur = 0; op = 0; fresh = true; disp = "0"; }
-    void update() {
-        char b[64];
-        snprintf(b, sizeof b, "%.6g", fresh ? acc : cur);
-        disp = b;
-    }
-};
-
-static std::vector<std::string> sysinfo_lines() {
-    std::vector<std::string> out;
-#ifdef _WIN32
-    out.push_back("Platform: Windows (PC test)");
-    return out;
-#else
-    std::vector<std::string> t;
-    run_cmd_lines("uname -a", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("cat /etc/os-release 2>/dev/null | head -2", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("uptime", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("free -h 2>/dev/null", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("df -h / 2>/dev/null", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("grep -m1 'model name' /proc/cpuinfo 2>/dev/null", t);
-    for (auto &s : t) out.push_back(s);
-    t.clear();
-    run_cmd_lines("cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null", t);
-    if (!t.empty()) {
-        int mC = atoi(t[0].c_str());
-        char b[64];
-        snprintf(b, sizeof b, "CPU temp: %d.%02d C", mC / 1000, (mC % 1000) / 10);
-        out.push_back(b);
-    }
-    return out;
-#endif
-}
-
-// ----------------------------- рендер экранов -----------------------------
-static void render_desktop(Renderer &R, const std::vector<App> &apps, int sel, const char *clock, const char *batt) {
+// ----------------------------- экраны -----------------------------
+static void render_desktop(Renderer &R, const std::vector<App> &apps, int sel,
+                           int cx, int cy, const char *clock, const char *batt,
+                           const Settings &S, int &hover) {
     fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
     for (int y = STATUS_H; y < SCREEN_H; ++y) {
-        Uint8 shade = (Uint8)(18 + (y * 20) / SCREEN_H);
-        Uint32 c = rgb(shade, shade, shade + 6);
+        Uint8 shade = (Uint8)(16 + (y * 18) / SCREEN_H);
+        Uint32 c = rgb(shade, shade, shade + 5);
         for (int x = 0; x < SCREEN_W; ++x) R.pix[y * (R.pitch / 4) + x] = c;
     }
     draw_statusbar(R, clock, batt, "r36pda");
-    int cols = (SCREEN_W - 2 * MARGIN) / ICON_SLOT;
+    int sz = S.icon_size;
+    int pad = 14;
+    int cols = (SCREEN_W - 2 * pad) / (sz + 20);
     if (cols < 1) cols = 1;
+    int rows = ((int)apps.size() + cols - 1) / cols;
+    int grid_w = cols * (sz + 20) - 20;
+    int grid_h = rows * (sz + 26);
+    int gx = (SCREEN_W - grid_w) / 2;
+    int gy = STATUS_H + 8 + std::max(0, (SCREEN_H - STATUS_H - 8 - grid_h) / 2 - 6);
+    hover = -1;
     for (size_t i = 0; i < apps.size(); ++i) {
-        int r = (int)(i / cols);
-        int c = (int)(i % cols);
-        int x = MARGIN + c * ICON_SLOT + (ICON_SLOT - 96) / 2;
-        int y = STATUS_H + MARGIN / 2 + r * (ICON_SLOT + LABEL_H);
-        if (y + ICON_SLOT > SCREEN_H - 8) break;
-        drawicon(R, apps[i], x, y, 96, (int)i == sel);
-        drawlabel(R, apps[i].name, MARGIN + c * ICON_SLOT, y + 96 + 2, ICON_SLOT, 2, (int)i == sel);
+        int r = (int)(i / cols), c = (int)(i % cols);
+        int x = gx + c * (sz + 20);
+        int y = gy + r * (sz + 26);
+        bool selb = ((int)i == sel);
+        if (cx >= x && cx <= x + sz && cy >= y && cy <= y + sz) { selb = true; hover = (int)i; }
+        drawicon(R, apps[i], x, y, sz, selb);
+        drawlabel(R, apps[i].name, x - 10, y + sz + 3, sz + 20, 2, selb);
     }
-    const char *h = "A: run  arrows: move  Fn+Start: quit";
-    drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 14, 2, rgb(120, 120, 130));
+    draw_cursor(R, cx, cy);
+    const char *h = "A: run  stick: cursor  Select+Start: quit";
+    drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(110, 110, 125));
 }
 
-static void render_term(Renderer &R, TermState &T, const char *clock, const char *batt) {
+static void render_term(Renderer &R, TermState &T, const char *clock, const char *batt, const Settings &S) {
     fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
     draw_statusbar(R, clock, batt, "Terminal");
+    int kb_h = 4 * 42 + 34;
+    int area_bottom = SCREEN_H - kb_h - 2;
+    // подсказки
+    if (!T.suggestions.empty()) {
+        std::string sug;
+        for (auto &s : T.suggestions) { sug += s; sug += " "; }
+        if ((int)sug.size() > 60) sug = sug.substr(0, 60);
+        drawtext(R, sug.c_str(), 8, area_bottom - 40, 2, rgb(140, 220, 255));
+        drawtext(R, "Tab: дополнить", 8, area_bottom - 22, 2, rgb(120, 120, 135));
+    }
     int line_h = 16;
-    int area_h = 4 * 40 + 34;
-    int term_bottom = SCREEN_H - area_h - 22;
-    int maxlines = (term_bottom - STATUS_H) / line_h;
+    int maxlines = (area_bottom - STATUS_H - 4) / line_h;
     size_t start = T.lines.size() > (size_t)maxlines ? T.lines.size() - (size_t)maxlines : 0;
     for (size_t i = start; i < T.lines.size(); ++i) {
         std::string s = T.lines[i];
-        if ((int)s.size() > 50) s = s.substr(0, 50);
+        if ((int)s.size() > 60) s = s.substr(0, 60);
         drawtext(R, s.c_str(), 8, STATUS_H + 4 + (int)(i - start) * line_h, 2, rgb(220, 220, 220));
     }
-    if (T.running) drawtext(R, "... running", 8, term_bottom - 16, 2, rgb(255, 200, 80));
-    std::string full = std::string("$ ") + T.input;
-    if ((int)full.size() > 50) full = full.substr(full.size() - 50);
+    if (T.running) drawtext(R, "...", SCREEN_W - 40, area_bottom - 14, 2, rgb(255, 200, 80));
+    std::string full = "$ " + T.input;
+    if ((int)full.size() > 58) full = full.substr(full.size() - 58);
     int cw = textw(full.c_str(), 2);
-    drawtext(R, full.c_str(), 8, term_bottom - 16, 2, rgb(255, 255, 255));
-    fillrect(R, 8 + cw, term_bottom - 16, 2, 14, rgb(255, 255, 255));
-    draw_keyboard(R, T.kb, SCREEN_H - area_h);
-}
-
-static void render_files(Renderer &R, FileState &F, const char *clock, const char *batt) {
-    fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
-    draw_statusbar(R, clock, batt, "Files");
-    drawtext(R, F.cwd.c_str(), 8, STATUS_H + 4, 2, rgb(255, 220, 60));
-    if (!F.msg.empty()) drawtext(R, F.msg.c_str(), 8, SCREEN_H - 12, 2, rgb(255, 120, 120));
-    int line_h = 16;
-    int y = STATUS_H + 24;
-    int maxlines = (SCREEN_H - y - 16) / line_h;
-    if (F.viewing) {
-        drawtext(R, F.viewname.c_str(), 8, y - 16, 2, rgb(120, 220, 120));
-        if (F.vscroll > (int)F.view.size()) F.vscroll = (int)F.view.size();
-        for (size_t i = (size_t)F.vscroll; i < F.view.size() && (int)(i - F.vscroll) < maxlines; ++i) {
-            std::string s = F.view[i];
-            if ((int)s.size() > 50) s = s.substr(0, 50);
-            drawtext(R, s.c_str(), 8, y + (int)(i - F.vscroll) * line_h, 2, rgb(220, 220, 220));
-        }
-        const char *h = "A/B: up  Select: back";
-        drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
-        return;
-    }
-    int start = F.sel - maxlines / 2;
-    if (start < 0) start = 0;
-    for (int i = start; i < (int)F.entries.size() && i < start + maxlines; ++i) {
-        bool sel = (i == F.sel);
-        std::string s = F.entries[i].second ? "[d] " : "    ";
-        s += F.entries[i].first;
-        if ((int)s.size() > 50) s = s.substr(0, 50);
-        drawtext(R, s.c_str(), 8, y + (i - start) * line_h, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
-    }
-    const char *h = "A: open  B: up";
-    drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
+    drawtext(R, full.c_str(), 8, area_bottom - 18, 2, rgb(255, 255, 255));
+    fillrect(R, 8 + cw, area_bottom - 18, 2, 14, rgb(255, 255, 255));
+    draw_keyboard(R, T.kb, SCREEN_H - kb_h, S);
 }
 
 static void render_sysinfo(Renderer &R, const std::vector<std::string> &lines, int scroll, const char *clock, const char *batt) {
@@ -695,7 +170,7 @@ static void render_sysinfo(Renderer &R, const std::vector<std::string> &lines, i
     if (scroll < 0) scroll = 0;
     for (size_t i = (size_t)scroll; i < lines.size() && (int)(i - scroll) < maxlines; ++i) {
         std::string s = lines[i];
-        if ((int)s.size() > 55) s = s.substr(0, 55);
+        if ((int)s.size() > 58) s = s.substr(0, 58);
         drawtext(R, s.c_str(), 8, y + (int)(i - scroll) * line_h, 2, rgb(220, 220, 220));
     }
     const char *h = "B: back";
@@ -721,11 +196,11 @@ static void render_proc(Renderer &R, ProcState &P, const char *clock, const char
         drawtext(R, s.c_str(), 8, y + (i - start) * line_h, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
     }
     if (P.confirm > 0) {
-        fillrect(R, 80, 200, 480, 60, rgb(60, 20, 20));
+        fillrect(R, 120, 200, 400, 60, rgb(70, 25, 25));
         char b[64];
         snprintf(b, sizeof b, "Kill PID %d?", P.confirm);
-        drawtext(R, b, 100, 214, 2, rgb(255, 255, 255));
-        drawtext(R, "A: yes  B: no", 100, 236, 2, rgb(255, 200, 80));
+        drawtext(R, b, 140, 214, 2, rgb(255, 255, 255));
+        drawtext(R, "A: yes  B: no", 140, 236, 2, rgb(255, 200, 80));
     } else {
         const char *h = "Start: kill  B: back";
         drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
@@ -733,21 +208,19 @@ static void render_proc(Renderer &R, ProcState &P, const char *clock, const char
 }
 
 static const char *CALC_GRID[4] = { "789/", "456*", "123-", "0.C=" };
-
 static void render_calc(Renderer &R, CalcState &C, const char *clock, const char *batt) {
     fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
     draw_statusbar(R, clock, batt, "Calculator");
     fillrect(R, 8, STATUS_H + 8, SCREEN_W - 16, 40, rgb(20, 20, 30));
     std::string d = C.disp;
     if ((int)d.size() > 20) d = d.substr(d.size() - 20);
-    drawtext(R, d.c_str(), SCREEN_W - 8 - textw(d.c_str(), 3), STATUS_H + 18, 3, rgb(255, 255, 255));
+    drawtext(R, d.c_str(), SCREEN_W - 8 - textw(d.c_str(), 3), STATUS_H + 16, 3, rgb(255, 255, 255));
     int kw = 150, kh = 60;
     int x0 = (SCREEN_W - 4 * kw) / 2;
     int y0 = STATUS_H + 60;
-    for (int r = 0; r < 4; ++r) {
+    for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) {
-            int x = x0 + c * kw;
-            int y = y0 + r * kh;
+            int x = x0 + c * kw, y = y0 + r * kh;
             bool sel = (C.brow == r && C.bcol == c);
             char ch = CALC_GRID[r][c];
             Uint32 col = sel ? rgb(255, 220, 60) : (ch >= '0' && ch <= '9' ? rgb(60, 60, 80) : rgb(80, 80, 100));
@@ -755,76 +228,94 @@ static void render_calc(Renderer &R, CalcState &C, const char *clock, const char
             char b[2] = { ch, 0 };
             drawtext(R, b, x + (kw - textw(b, 3)) / 2, y + (kh - 21) / 2, 3, sel ? rgb(0,0,0) : rgb(230,230,230));
         }
-    }
     const char *h = "B: back";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
 }
 
-// ----------------------------- ввод -----------------------------
-static void open_app(Renderer &R, Mode &mode, App &a, TermState &term,
-                     FileState &files, ProcState &procs,
-                     std::vector<std::string> &sysinfo, bool &sysinfo_loaded) {
-    if (a.mode == M_EXTERNAL) {
-        SDL_HideWindow(R.win);
-        launch_and_wait(a.command);
-        SDL_ShowWindow(R.win);
-        SDL_RaiseWindow(R.win);
-        return;
+// ----------------------------- настройки -----------------------------
+struct SettingsUI {
+    int item = 0;
+    int remap = -1;    // какой пункт переназначаем (-1=нет)
+    std::vector<std::string> items;
+    SettingsUI() {
+        items = { "Кнопка A", "Кнопка B", "Кнопка Start", "Кнопка Select",
+                  "Кнопка Fn", "Вверх", "Вниз", "Влево", "Вправо",
+                  "Размер иконок", "Масштаб клавиатуры", "Лог debug.log" };
     }
-    mode = a.mode;
-    if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); }
-    if (mode == M_FILES) files.refresh();
-    if (mode == M_PROC) procs.refresh();
-    if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
+};
+
+static void render_settings(Renderer &R, SettingsUI &UI, Settings &S, const char *clock, const char *batt) {
+    fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
+    draw_statusbar(R, clock, batt, "Settings");
+    int y = STATUS_H + 8;
+    for (size_t i = 0; i < UI.items.size(); ++i) {
+        bool sel = (int)i == UI.item;
+        std::string v;
+        if (UI.remap == (int)i) v = "... нажми кнопку";
+        else if (i <= 8) v = std::to_string(S.btn[i]);
+        else if (i == 9) v = std::to_string(S.icon_size);
+        else if (i == 10) v = std::to_string(S.kb_scale);
+        else v = S.log_enabled ? "вкл" : "выкл";
+        std::string line = UI.items[i] + ": " + v;
+        if ((int)line.size() > 56) line = line.substr(0, 56);
+        drawtext(R, line.c_str(), 8, y + (int)i * 18, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
+        if (sel) fillrect(R, SCREEN_W - 8, y + (int)i * 18, 6, 14, rgb(255, 220, 60));
+    }
+    const char *h = "A: изменить  B: back";
+    drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
+    if (UI.remap >= 0) {
+        fillrect(R, 140, 220, 360, 50, rgb(40, 40, 70));
+        drawtext(R, "Нажми любую кнопку на геймпаде", 156, 232, 2, rgb(255, 255, 255));
+        drawtext(R, "или Start чтобы отменить", 156, 252, 2, rgb(255, 200, 80));
+    }
 }
 
-static void calc_press(CalcState &C, char ch) {
-    if (ch >= '0' && ch <= '9') C.digit(ch - '0');
-    else if (ch == 'C') C.clear();
-    else if (ch == '=') C.equals();
-    else if (ch == '+') C.apply_op(1);
-    else if (ch == '-') C.apply_op(2);
-    else if (ch == '*') C.apply_op(3);
-    else if (ch == '/') C.apply_op(4);
+// ----------------------------- ввод -----------------------------
+static int gp_btn(Settings &S, int b) {
+    for (int i = 0; i < BTN_MAX; ++i) if (S.btn[i] == b) return i;
+    return -1;
 }
 
-// ----------------------------- главный цикл -----------------------------
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) < 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
-
     Renderer R;
+    extern Renderer *g_R;
+    g_R = &R;
     Uint32 flags = 0;
     const char *fs = getenv("R36PDA_FULLSCREEN");
     if (fs && fs[0] == '1') flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-
-    R.win = SDL_CreateWindow("r36pda", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             SCREEN_W, SCREEN_H, flags);
+    R.win = SDL_CreateWindow("r36pda", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_W, SCREEN_H, flags);
     if (!R.win) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return 1; }
-
     R.ren = SDL_CreateRenderer(R.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!R.ren) R.ren = SDL_CreateRenderer(R.win, -1, SDL_RENDERER_SOFTWARE);
     if (!R.ren) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); return 1; }
-
-    R.fb = SDL_CreateTexture(R.ren, SDL_PIXELFORMAT_RGB888,
-                             SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H);
+    R.fb = SDL_CreateTexture(R.ren, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H);
     if (!R.fb) { fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError()); return 1; }
-
     if (SDL_NumJoysticks() > 0) R.joy = SDL_JoystickOpen(0);
 
+    Settings S;
+    S.load();
+    S.log("=== r36pda start ===");
+
+    // приложения
     std::vector<App> apps = builtin_apps();
+#ifdef USE_LUA
+    for (auto &a : lua_apps()) apps.push_back(a);
+#endif
     std::vector<App> ext = load_external_apps("config/apps.cfg");
     if (ext.empty()) ext = load_external_apps("apps.cfg");
     for (auto &a : ext) apps.push_back(a);
 
-    Mode mode = M_DESKTOP;
+    AppMode mode = M_DESKTOP;
     int sel = 0;
+    int hover = -1;
     bool running = true;
     bool fn_pressed = false;
+    int cx = SCREEN_W / 2, cy = SCREEN_H / 2;
 
     char clockbuf[16], battbuf[16];
     read_clock(clockbuf, sizeof clockbuf);
@@ -834,6 +325,7 @@ int main(int argc, char **argv) {
     FileState files;
     ProcState procs;
     CalcState calc;
+    SettingsUI su;
     std::vector<std::string> sysinfo;
     int sysinfo_scroll = 0;
     bool sysinfo_loaded = false;
@@ -846,6 +338,147 @@ int main(int argc, char **argv) {
             switch (ev.type) {
             case SDL_QUIT: running = false; break;
 
+            case SDL_JOYAXISMOTION: {
+                int ax = ev.jaxis.axis, v = ev.jaxis.value;
+                if (ax == S.axis_x) cx += v / (S.axis_thresh / 4);
+                else if (ax == S.axis_y) cy += v / (S.axis_thresh / 4);
+                if (cx < 0) cx = 0; if (cx >= SCREEN_W) cx = SCREEN_W - 1;
+                if (cy < 0) cy = 0; if (cy >= SCREEN_H) cy = SCREEN_H - 1;
+                break;
+            }
+
+            case SDL_JOYBUTTONDOWN: {
+                int b = ev.jbutton.button;
+                int act = gp_btn(S, b);   // 0..8 или -1
+                if (act == BTN_FN) { fn_pressed = true; S.log("Fn down"); break; }
+                if (act == BTN_START && fn_pressed) { running = false; fn_pressed = false; break; }
+                if (fn_pressed) {
+                    if (act == BTN_A || act == BTN_B) { if (mode != M_DESKTOP) mode = M_DESKTOP; }
+                    fn_pressed = false;
+                    break;
+                }
+                if (act < 0) break;
+
+                // настройки: режим переназначения
+                if (mode == M_SETTINGS && su.remap >= 0) {
+                    S.btn[su.remap] = b;
+                    su.remap = -1;
+                    S.save();
+                    break;
+                }
+
+                switch (mode) {
+                case M_DESKTOP: {
+                    if (act == BTN_UP || act == BTN_DOWN || act == BTN_LEFT || act == BTN_RIGHT) {
+                        int cols = (SCREEN_W - 28) / (S.icon_size + 20);
+                        if (cols < 1) cols = 1;
+                        int row = sel / cols, col = sel % cols;
+                        if (act == BTN_UP && row > 0) sel -= cols;
+                        if (act == BTN_DOWN) { int rr = row + 1; int maxrow = ((int)apps.size() - 1) / cols; if (rr <= maxrow) sel = rr * cols + std::min(col, cols - 1); }
+                        if (act == BTN_LEFT && col > 0) sel -= 1;
+                        if (act == BTN_RIGHT) { if (col < cols - 1 && sel + 1 < (int)apps.size()) sel += 1; }
+                    } else if (act == BTN_A) {
+                        int t = hover >= 0 ? hover : sel;
+                        if (!apps.empty() && t >= 0 && t < (int)apps.size()) {
+                            App &a = apps[t];
+                            if (a.mode == M_EXTERNAL) {
+                                SDL_HideWindow(R.win);
+                                launch_and_wait(a.command);
+                                SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
+                            } else {
+                                mode = a.mode; sel = 0;
+                                if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); term.lines.clear(); term.add_line("Введи команду. Tab - дополнение, Select - подсказка."); }
+                                if (mode == M_FILES) { files.refresh(); }
+                                if (mode == M_PROC) procs.refresh();
+                                if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
+#ifdef USE_LUA
+                                if (mode == M_SCRIPT) lua_load_file(a.command);
+#endif
+                            }
+                        }
+                    }
+                    break;
+                }
+                case M_TERM:
+                    if (act == BTN_UP) term.kb.move(-1, 0);
+                    else if (act == BTN_DOWN) term.kb.move(1, 0);
+                    else if (act == BTN_LEFT) term.kb.move(0, -1);
+                    else if (act == BTN_RIGHT) term.kb.move(0, 1);
+                    else if (act == BTN_A || act == BTN_B) {
+                        const char *k = term.kb.cell_char();
+                        if (!k) break;
+                        std::string key = k;
+                        if (key == "space") term.input += ' ';
+                        else if (key == "del") { if (!term.input.empty()) term.input.pop_back(); }
+                        else if (key == "tab") term.complete();
+                        else if (key == "enter") term.run(term.input);
+                        else if (key == "abc") term.kb.page = 1 - term.kb.page;
+                        else if (key == "shift") term.kb.shift = !term.kb.shift;
+                        else if (key == "exit") mode = M_DESKTOP;
+                        else term.input += key;
+                        term.update_suggestions();
+                    }
+                    else if (act == BTN_START) term.run(term.input);
+                    else if (act == BTN_SELECT) term.update_suggestions();
+                    break;
+                case M_FILES:
+                    if (act == BTN_UP) { Panel &p = files.cur(); if (p.viewing) p.vscroll = std::max(0, p.vscroll - 1); else if (p.sel > 0) --p.sel; }
+                    else if (act == BTN_DOWN) { Panel &p = files.cur(); if (p.viewing) p.vscroll = std::min((int)p.view.size(), p.vscroll + 1); else if (p.sel < (int)p.entries.size() - 1) ++p.sel; }
+                    else if (act == BTN_LEFT) files.focus = 0;
+                    else if (act == BTN_RIGHT) files.focus = 1;
+                    else if (act == BTN_A) { if (files.confirm_delete) files.do_delete(); else files.cur().enter(); }
+                    else if (act == BTN_B) { if (files.confirm_delete) files.confirm_delete = false; else files.cur().up(); }
+                    else if (act == BTN_SELECT) files.focus = 1 - files.focus;
+                    else if (act == BTN_START) files.cmd_copy();
+                    break;
+                case M_SYSINFO:
+                    if (act == BTN_UP) sysinfo_scroll = std::max(0, sysinfo_scroll - 1);
+                    else if (act == BTN_DOWN) sysinfo_scroll = std::min((int)sysinfo.size() - 1, sysinfo_scroll + 1);
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_PROC:
+                    if (act == BTN_UP) procs.sel = std::max(0, procs.sel - 1);
+                    else if (act == BTN_DOWN) procs.sel = std::min((int)procs.procs.size() - 1, procs.sel + 1);
+                    else if (act == BTN_START) { if (procs.sel >= 0 && procs.sel < (int)procs.procs.size()) procs.confirm = procs.procs[procs.sel].first; }
+                    else if (act == BTN_A && procs.confirm > 0) procs.do_kill();
+                    else if (act == BTN_B) { if (procs.confirm > 0) procs.confirm = -1; else mode = M_DESKTOP; }
+                    break;
+                case M_CALC:
+                    if (act == BTN_UP) calc.brow = std::max(0, calc.brow - 1);
+                    else if (act == BTN_DOWN) calc.brow = std::min(3, calc.brow + 1);
+                    else if (act == BTN_LEFT) calc.bcol = std::max(0, calc.bcol - 1);
+                    else if (act == BTN_RIGHT) calc.bcol = std::min(3, calc.bcol + 1);
+                    else if (act == BTN_A || act == BTN_B) calc_press(calc, CALC_GRID[calc.brow][calc.bcol]);
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    break;
+                case M_SETTINGS:
+                    if (act == BTN_UP) su.item = std::max(0, su.item - 1);
+                    else if (act == BTN_DOWN) su.item = std::min((int)su.items.size() - 1, su.item + 1);
+                    else if (act == BTN_A) { if (su.item <= 8) su.remap = su.item; }
+                    else if (act == BTN_B) mode = M_DESKTOP;
+                    else if (act == BTN_LEFT || act == BTN_RIGHT) {
+                        if (su.item == 9) { S.icon_size += (act == BTN_RIGHT ? 8 : -8); S.save(); }
+                        else if (su.item == 10) { S.kb_scale += (act == BTN_RIGHT ? 1 : -1); S.save(); }
+                        else if (su.item == 11) { S.log_enabled = !S.log_enabled; S.save(); }
+                    }
+                    break;
+#ifdef USE_LUA
+                case M_SCRIPT:
+                    g_lua.keys.push_back(act == BTN_A ? "a" : act == BTN_B ? "b" :
+                                          act == BTN_UP ? "up" : act == BTN_DOWN ? "down" :
+                                          act == BTN_LEFT ? "left" : act == BTN_RIGHT ? "right" :
+                                          act == BTN_START ? "start" : "select");
+                    break;
+#endif
+                case M_EXTERNAL: break;
+                }
+                break;
+            }
+
+            case SDL_JOYBUTTONUP:
+                if (gp_btn(S, ev.jbutton.button) == BTN_FN) fn_pressed = false;
+                break;
+
             case SDL_KEYDOWN: {
                 if (ev.key.repeat) break;
                 int sym = ev.key.keysym.sym;
@@ -855,58 +488,32 @@ int main(int argc, char **argv) {
                     else if (sym == SDLK_DOWN || sym == SDLK_s) sel += 4;
                     else if (sym == SDLK_LEFT || sym == SDLK_a) sel = std::max(0, sel - 1);
                     else if (sym == SDLK_RIGHT || sym == SDLK_d) sel += 1;
-                    else if (sym == SDLK_RETURN || sym == SDLK_SPACE || sym == SDLK_KP_ENTER) {
-                        if (!apps.empty()) open_app(R, mode, apps[sel % (int)apps.size()],
-                                                    term, files, procs, sysinfo, sysinfo_loaded);
+                    else if (sym == SDLK_RETURN || sym == SDLK_SPACE) {
+                        if (!apps.empty()) {
+                            App &a = apps[hover >= 0 ? hover : sel];
+                            if (a.mode == M_EXTERNAL) {
+                                SDL_HideWindow(R.win);
+                                launch_and_wait(a.command);
+                                SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
+                            } else { mode = a.mode; }
+                        }
                     }
                     else if (sym == SDLK_ESCAPE) running = false;
-                    else if (sym == SDLK_F1) {
-                        SDL_HideWindow(R.win);
-                        launch_and_wait("pkill emulationstation; emulationstation");
-                        SDL_ShowWindow(R.win);
-                    }
                     break;
                 case M_TERM:
                     if (sym == SDLK_ESCAPE) mode = M_DESKTOP;
-                    else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) term.start_cmd(term.input);
+                    else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) term.run(term.input);
                     else if (sym == SDLK_BACKSPACE && !term.input.empty()) term.input.pop_back();
                     else if (sym == SDLK_UP) term.kb.move(-1, 0);
                     else if (sym == SDLK_DOWN) term.kb.move(1, 0);
                     else if (sym == SDLK_LEFT) term.kb.move(0, -1);
                     else if (sym == SDLK_RIGHT) term.kb.move(0, 1);
-                    else if (sym == SDLK_TAB) term.kb.page = 1 - term.kb.page;
+                    else if (sym == SDLK_TAB) term.complete();
+                    else if (sym == SDLK_F1) mode = M_DESKTOP;
                     break;
-                case M_FILES:
-                    if (sym == SDLK_UP) { if (files.viewing) files.vscroll = std::max(0, files.vscroll - 1); else files.sel = std::max(0, files.sel - 1); }
-                    else if (sym == SDLK_DOWN) { if (files.viewing) files.vscroll = std::min((int)files.view.size(), files.vscroll + 1); else files.sel = std::min((int)files.entries.size() - 1, files.sel + 1); }
-                    else if (sym == SDLK_LEFT) { if (files.viewing) files.vscroll = std::max(0, files.vscroll - 10); else files.sel = std::max(0, files.sel - 1); }
-                    else if (sym == SDLK_RIGHT) { if (files.viewing) files.vscroll = std::min((int)files.view.size(), files.vscroll + 10); else files.sel = std::min((int)files.entries.size() - 1, files.sel + 1); }
-                    else if (sym == SDLK_RETURN || sym == SDLK_SPACE) files.enter();
-                    else if (sym == SDLK_BACKSPACE || sym == SDLK_ESCAPE) files.up();
+                default:
+                    if (sym == SDLK_ESCAPE || sym == SDLK_F1) mode = M_DESKTOP;
                     break;
-                case M_SYSINFO:
-                    if (sym == SDLK_UP) sysinfo_scroll = std::max(0, sysinfo_scroll - 1);
-                    else if (sym == SDLK_DOWN) sysinfo_scroll = std::min((int)sysinfo.size() - 1, sysinfo_scroll + 1);
-                    else if (sym == SDLK_BACKSPACE || sym == SDLK_ESCAPE) mode = M_DESKTOP;
-                    break;
-                case M_PROC:
-                    if (sym == SDLK_UP) procs.sel = std::max(0, procs.sel - 1);
-                    else if (sym == SDLK_DOWN) procs.sel = std::min((int)procs.procs.size() - 1, procs.sel + 1);
-                    else if (sym == SDLK_RETURN && procs.confirm > 0) procs.do_kill();
-                    else if (sym == SDLK_BACKSPACE || sym == SDLK_ESCAPE) {
-                        if (procs.confirm > 0) procs.confirm = -1;
-                        else mode = M_DESKTOP;
-                    }
-                    break;
-                case M_CALC:
-                    if (sym == SDLK_UP) calc.brow = std::max(0, calc.brow - 1);
-                    else if (sym == SDLK_DOWN) calc.brow = std::min(3, calc.brow + 1);
-                    else if (sym == SDLK_LEFT) calc.bcol = std::max(0, calc.bcol - 1);
-                    else if (sym == SDLK_RIGHT) calc.bcol = std::min(3, calc.bcol + 1);
-                    else if (sym == SDLK_RETURN || sym == SDLK_SPACE) calc_press(calc, CALC_GRID[calc.brow][calc.bcol]);
-                    else if (sym == SDLK_BACKSPACE || sym == SDLK_ESCAPE) mode = M_DESKTOP;
-                    break;
-                case M_EXTERNAL: break;
                 }
                 break;
             }
@@ -915,100 +522,10 @@ int main(int argc, char **argv) {
                 if (mode == M_TERM) {
                     std::string t = ev.text.text;
                     for (size_t i = 0; i < t.size(); ++i) {
-                        if ((unsigned char)t[i] < 32) continue;
-                        if ((unsigned char)t[i] == 127) continue;
-                        term.input += t[i];
+                        unsigned char ch = (unsigned char)t[i];
+                        if (ch >= 32 && ch != 127) term.input += t[i];
                     }
-                }
-                break;
-            }
-
-            case SDL_JOYBUTTONDOWN: {
-                int b = ev.jbutton.button;
-                if (b == 16) { fn_pressed = true; break; }
-                if (b == 13 && fn_pressed) { running = false; fn_pressed = false; break; }
-                if (fn_pressed) {
-                    if (b == 0 || b == 1) { if (mode != M_DESKTOP) mode = M_DESKTOP; }
-                    fn_pressed = false;
-                    break;
-                }
-                switch (mode) {
-                case M_DESKTOP:
-                    if (b == 8) sel = std::max(0, sel - 4);
-                    else if (b == 9) sel += 4;
-                    else if (b == 10) sel = std::max(0, sel - 1);
-                    else if (b == 11) sel += 1;
-                    else if (b == 0 || b == 1 || b == 13) {
-                        if (!apps.empty()) open_app(R, mode, apps[sel % (int)apps.size()],
-                                                    term, files, procs, sysinfo, sysinfo_loaded);
-                    }
-                    break;
-                case M_TERM:
-                    if (b == 8) term.kb.move(-1, 0);
-                    else if (b == 9) term.kb.move(1, 0);
-                    else if (b == 10) term.kb.move(0, -1);
-                    else if (b == 11) term.kb.move(0, 1);
-                    else if (b == 0 || b == 1) {
-                        const char *k = term.kb.cell_char();
-                        if (!k) break;
-                        std::string key = k;
-                        if (key == "space") term.input += ' ';
-                        else if (key == "del") { if (!term.input.empty()) term.input.pop_back(); }
-                        else if (key == "enter") term.start_cmd(term.input);
-                        else if (key == "abc") term.kb.page = 1 - term.kb.page;
-                        else if (key == "shift") term.kb.shift = !term.kb.shift;
-                        else if (key == "exit") mode = M_DESKTOP;
-                        else term.input += key;
-                    }
-                    else if (b == 12) { if (!term.input.empty()) term.input.pop_back(); }
-                    else if (b == 13) term.start_cmd(term.input);
-                    break;
-                case M_FILES:
-                    if (b == 8) { if (files.viewing) files.vscroll = std::max(0, files.vscroll - 1); else files.sel = std::max(0, files.sel - 1); }
-                    else if (b == 9) { if (files.viewing) files.vscroll = std::min((int)files.view.size(), files.vscroll + 1); else files.sel = std::min((int)files.entries.size() - 1, files.sel + 1); }
-                    else if (b == 10) { if (files.viewing) files.vscroll = std::max(0, files.vscroll - 10); else files.sel = std::max(0, files.sel - 1); }
-                    else if (b == 11) { if (files.viewing) files.vscroll = std::min((int)files.view.size(), files.vscroll + 10); else files.sel = std::min((int)files.entries.size() - 1, files.sel + 1); }
-                    else if (b == 0 || b == 1) files.enter();
-                    else if (b == 12 || b == 13) files.up();
-                    break;
-                case M_SYSINFO:
-                    if (b == 8) sysinfo_scroll = std::max(0, sysinfo_scroll - 1);
-                    else if (b == 9) sysinfo_scroll = std::min((int)sysinfo.size() - 1, sysinfo_scroll + 1);
-                    else if (b == 12 || b == 13 || b == 0 || b == 1) mode = M_DESKTOP;
-                    break;
-                case M_PROC:
-                    if (b == 8) procs.sel = std::max(0, procs.sel - 1);
-                    else if (b == 9) procs.sel = std::min((int)procs.procs.size() - 1, procs.sel + 1);
-                    else if (b == 13) { if (procs.sel >= 0 && procs.sel < (int)procs.procs.size()) procs.confirm = procs.procs[procs.sel].first; }
-                    else if (b == 1 && procs.confirm > 0) procs.do_kill();
-                    else if (b == 0 || b == 12 || b == 13) {
-                        if (procs.confirm > 0) procs.confirm = -1;
-                        else mode = M_DESKTOP;
-                    }
-                    break;
-                case M_CALC:
-                    if (b == 8) calc.brow = std::max(0, calc.brow - 1);
-                    else if (b == 9) calc.brow = std::min(3, calc.brow + 1);
-                    else if (b == 10) calc.bcol = std::max(0, calc.bcol - 1);
-                    else if (b == 11) calc.bcol = std::min(3, calc.bcol + 1);
-                    else if (b == 0 || b == 1) calc_press(calc, CALC_GRID[calc.brow][calc.bcol]);
-                    else if (b == 12 || b == 13) mode = M_DESKTOP;
-                    break;
-                case M_EXTERNAL: break;
-                }
-                break;
-            }
-
-            case SDL_JOYBUTTONUP: {
-                if (ev.jbutton.button == 16) fn_pressed = false;
-                break;
-            }
-            case SDL_JOYHATMOTION: {
-                if (mode == M_DESKTOP) {
-                    if (ev.jhat.value & SDL_HAT_UP) sel = std::max(0, sel - 4);
-                    if (ev.jhat.value & SDL_HAT_DOWN) sel += 4;
-                    if (ev.jhat.value & SDL_HAT_LEFT) sel = std::max(0, sel - 1);
-                    if (ev.jhat.value & SDL_HAT_RIGHT) sel += 1;
+                    term.update_suggestions();
                 }
                 break;
             }
@@ -1022,20 +539,76 @@ int main(int argc, char **argv) {
 
         term.pump();
 
+        // Lua скрипт
+#ifdef USE_LUA
+        if (mode == M_SCRIPT) {
+            lua_frame();
+            if (!g_lua.running) mode = M_DESKTOP;
+        }
+#endif
+
         if (SDL_LockTexture(R.fb, nullptr, (void **)&R.pix, &R.pitch) != 0) {
             fprintf(stderr, "SDL_LockTexture: %s\n", SDL_GetError());
             break;
         }
 
+        // крестик закрытия в приложениях (кроме рабочего стола)
+        bool close_over = false;
         switch (mode) {
-        case M_DESKTOP: render_desktop(R, apps, sel, clockbuf, battbuf); break;
-        case M_TERM:    render_term(R, term, clockbuf, battbuf); break;
-        case M_FILES:   render_files(R, files, clockbuf, battbuf); break;
-        case M_SYSINFO: render_sysinfo(R, sysinfo, sysinfo_scroll, clockbuf, battbuf); break;
-        case M_PROC:    render_proc(R, procs, clockbuf, battbuf); break;
-        case M_CALC:    render_calc(R, calc, clockbuf, battbuf); break;
-        case M_EXTERNAL: render_desktop(R, apps, sel, clockbuf, battbuf); break;
+        case M_DESKTOP:
+            render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
+            break;
+        case M_TERM:
+            render_term(R, term, clockbuf, battbuf, S);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_FILES:
+            render_files(R, files, clockbuf, battbuf);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_SYSINFO:
+            render_sysinfo(R, sysinfo, sysinfo_scroll, clockbuf, battbuf);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_PROC:
+            render_proc(R, procs, clockbuf, battbuf);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_CALC:
+            render_calc(R, calc, clockbuf, battbuf);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+        case M_SETTINGS:
+            render_settings(R, su, S, clockbuf, battbuf);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
+#ifdef USE_LUA
+        case M_SCRIPT: {
+            fillrect(R, 0, 0, SCREEN_W, SCREEN_H, rgb(0, 0, 0));
+            draw_statusbar(R, clockbuf, battbuf, "Script");
+            int y = STATUS_H + 8;
+            for (size_t i = 0; i < g_lua.out.size() && i < 24; ++i) {
+                std::string s = g_lua.out[i];
+                if ((int)s.size() > 58) s = s.substr(0, 58);
+                drawtext(R, s.c_str(), 8, y + (int)i * 16, 2, rgb(220, 220, 220));
+            }
+            draw_cursor(R, cx, cy);
+            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            break;
         }
+#endif
+        case M_EXTERNAL:
+            render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
+            break;
+        }
+
+        // A по крестику = выход из приложения
+        if (close_over && (mode == M_TERM || mode == M_FILES || mode == M_SYSINFO ||
+                           mode == M_PROC || mode == M_CALC || mode == M_SETTINGS
+#ifdef USE_LUA
+                           || mode == M_SCRIPT
+#endif
+                           )) mode = M_DESKTOP;
 
         SDL_UnlockTexture(R.fb);
         SDL_RenderCopy(R.ren, R.fb, nullptr, nullptr);
@@ -1047,10 +620,10 @@ int main(int argc, char **argv) {
             read_battery(battbuf, sizeof battbuf);
             last_tick = SDL_GetTicks();
         }
-
         SDL_Delay(16);
     }
 
+    S.log("=== r36pda exit ===");
     if (R.joy) SDL_JoystickClose(R.joy);
     SDL_DestroyTexture(R.fb);
     SDL_DestroyRenderer(R.ren);
@@ -1058,3 +631,5 @@ int main(int argc, char **argv) {
     SDL_Quit();
     return 0;
 }
+
+Renderer *g_R = nullptr;
