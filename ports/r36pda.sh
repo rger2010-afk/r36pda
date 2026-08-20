@@ -1,14 +1,14 @@
 #!/bin/bash
-# r36pda — порт-лаунчер для ArkOS.
-# Папка может лежать где угодно в /roms/ports/ — путь определяется сам.
+# r36pda — PDA desktop launcher (PortMaster-style layout).
+# Скрипт лежит прямо в /roms/ports/, папка с данными — рядом: /roms/ports/r36pda/
 
 PORTNAME="r36pda"
-GAMEDIR="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+GAMEDIR="$HERE/$PORTNAME"
 LOG="/tmp/r36pda.log"
 
 cd "$GAMEDIR" || { echo "cannot cd to $GAMEDIR" > "$LOG"; exit 1; }
 
-# права на терминал, джойстик и свои файлы
 chmod 666 /dev/tty1 2>/dev/null
 chmod 666 /dev/input/js0 2>/dev/null
 chmod +x ./r36pda ./apps/*.sh 2>/dev/null
@@ -16,16 +16,6 @@ chmod +x ./r36pda ./apps/*.sh 2>/dev/null
 echo "=== r36pda launcher ===" > "$LOG"
 echo "dir: $GAMEDIR" >> "$LOG"
 echo "bin: $(ls -la ./r36pda 2>&1)" >> "$LOG"
-
-# проверка SDL2 в системе
-if ! ldconfig -p 2>/dev/null | grep -qi "libSDL2"; then
-    echo "ОШИБКА: SDL2 не найдена в системе." >> "$LOG"
-    echo "ОШИБКА: SDL2 не найдена в системе." > /dev/tty1 2>&1
-    echo "Установи: sudo apt-get install libsdl2-2.0-0" >> "$LOG"
-    sleep 8
-    exit 1
-fi
-echo "SDL2: найдена" >> "$LOG"
 
 # остановить ES, чтобы не конфликтовать за экран
 pkill -f emulationstation 2>/dev/null
