@@ -20,9 +20,9 @@ jobs:
       - name: Cross-compile SDL2 (static)
         run: |
           cd "$HOME"
-          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-2.30.10.tar.gz
-          tar xzf SDL2-2.30.10.tar.gz
-          cd SDL2-2.30.10
+          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.0.22/SDL2-2.0.22.tar.gz
+          tar xzf SDL2-2.0.22.tar.gz
+          cd SDL2-2.0.22
           mkdir -p build && cd build
           ../configure \
             --host=aarch64-linux-gnu \
