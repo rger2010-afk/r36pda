@@ -26,6 +26,10 @@ jobs:
               make
               make package
               file r36pda-port/r36pda/r36pda
+              echo '--- ldd ---'
+              ldd r36pda-port/r36pda/r36pda || true
+              echo '--- size ---'
+              ls -la r36pda-port/r36pda/r36pda
             '
 
       - name: Verify artifact
