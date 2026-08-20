@@ -12,30 +12,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Build in arm64 container
+      - name: Install cross toolchain
         run: |
-          docker run --platform linux/arm64 --rm \
-            -v "${{ github.workspace }}:/work" -w /work \
-            ubuntu:20.04 bash -c '
-              set -e
-              apt-get update
-              apt-get install -y --no-install-recommends g++ make libsdl2-dev file
-              make
-              make package
-              file r36pda-port/r36pda/r36pda
-              echo '--- ldd ---'
-              ldd r36pda-port/r36pda/r36pda || true
-              echo '--- size ---'
-              ls -la r36pda-port/r36pda/r36pda
-            '
+          sudo apt-get update
+          sudo apt-get install -y g++-aarch64-linux-gnu wget tar file
 
-      - name: Verify artifact
+      - name: Cross-compile SDL2 (static)
         run: |
-          ls -la r36pda-port/r36pda/
+          cd "$HOME"
+          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-2.30.10.tar.gz
+          tar xzf SDL2-2.30.10.tar.gz
+          cd SDL2-2.30.10
+          mkdir -p build && cd build
+          ../configure \
+            --host=aarch64-linux-gnu \
+            --disable-shared --enable-static \
+            --prefix="$HOME/sdl2-arm64" \
+            --disable-video-x11 --disable-video-wayland \
+            --disable-video-offscreen --disable-video-vulkan \
+            --disable-alsa --disable-pulseaudio --disable-oss --disable-joystick-virtual \
+            --enable-video-fbcon --enable-video-kmsdrm \
+            --disable-sdltest
+          make -j$(nproc)
+          make install
+
+      - name: Build r36pda (statically linked)
+        run: |
+          make clean
+          make \
+            CXX=aarch64-linux-gnu-g++ \
+            CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -static" \
+            SDL_CFLAGS="-I$HOME/sdl2-arm64/include" \
+            SDL_LIBS="$HOME/sdl2-arm64/lib/libSDL2.a -lstdc++ -lm -lpthread -ldl"
+
+      - name: Package
+        run: make package
+
+      - name: Verify
+        run: |
           file r36pda-port/r36pda/r36pda
+          echo '--- ldd ---'
+          ldd r36pda-port/r36pda/r36pda || echo "(fully static - no dynamic deps)"
+          ls -la r36pda-port/r36pda/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
