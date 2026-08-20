@@ -42,7 +42,7 @@ jobs:
           make \
             CXX=aarch64-linux-gnu-g++ \
             CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -static" \
-            SDL_CFLAGS="-I$HOME/sdl2-arm64/include" \
+            SDL_CFLAGS="-I$HOME/sdl2-arm64/include/SDL2" \
             SDL_LIBS="$HOME/sdl2-arm64/lib/libSDL2.a -lstdc++ -lm -lpthread -ldl"
 
       - name: Package
