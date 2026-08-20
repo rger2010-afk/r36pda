@@ -1,10 +1,10 @@
-// r36pda — PDA-десктоп для R36S (ArkOS) и для теста на ПК.
-// C++17 + SDL2 + Lua 5.3. Без внешних GUI-библиотек.
-// Встроенные приложения: терминал, FAR-файлы, система, процессы,
-// калькулятор, настройки, Lua-скрипты.
+﻿// r36pda вЂ” PDA-РґРµСЃРєС‚РѕРї РґР»СЏ R36S (ArkOS) Рё РґР»СЏ С‚РµСЃС‚Р° РЅР° РџРљ.
+// C++17 + SDL2 + Lua 5.3. Р‘РµР· РІРЅРµС€РЅРёС… GUI-Р±РёР±Р»РёРѕС‚РµРє.
+// Р’СЃС‚СЂРѕРµРЅРЅС‹Рµ РїСЂРёР»РѕР¶РµРЅРёСЏ: С‚РµСЂРјРёРЅР°Р», FAR-С„Р°Р№Р»С‹, СЃРёСЃС‚РµРјР°, РїСЂРѕС†РµСЃСЃС‹,
+// РєР°Р»СЊРєСѓР»СЏС‚РѕСЂ, РЅР°СЃС‚СЂРѕР№РєРё, Lua-СЃРєСЂРёРїС‚С‹.
 #include "lua.h"
 
-// режимы и struct App — определены в app.h (включается через lua.h)
+// СЂРµР¶РёРјС‹ Рё struct App вЂ” РѕРїСЂРµРґРµР»РµРЅС‹ РІ app.h (РІРєР»СЋС‡Р°РµС‚СЃСЏ С‡РµСЂРµР· lua.h)
 static std::vector<App> load_external_apps(const std::string &path) {
     std::vector<App> out;
     FILE *f = fopen(path.c_str(), "r");
@@ -43,7 +43,7 @@ static std::vector<App> builtin_apps() {
     return out;
 }
 
-// ----------------------------- иконки -----------------------------
+// ----------------------------- РёРєРѕРЅРєРё -----------------------------
 static void drawicon(Renderer &R, const App &a, int x, int y, int sz, bool sel) {
     Uint32 base = rgb(a.color[0], a.color[1], a.color[2]);
     if (sel) base = rgb(255, 255, 255);
@@ -76,7 +76,7 @@ static void drawlabel(Renderer &R, const std::string &name, int x, int y, int w,
     drawtext(R, t.c_str(), x, y, s, c);
 }
 
-// ----------------------------- курсор-стрелка -----------------------------
+// ----------------------------- РєСѓСЂСЃРѕСЂ-СЃС‚СЂРµР»РєР° -----------------------------
 static void draw_cursor(Renderer &R, int cx, int cy) {
     for (int i = 0; i < 7; ++i) {
         putpx(R, cx + i, cy, rgb(255, 255, 255));
@@ -86,8 +86,8 @@ static void draw_cursor(Renderer &R, int cx, int cy) {
     fillrect(R, cx, cy, 6, 6, rgb(255, 255, 0));
 }
 
-// ----------------------------- крестик закрытия -----------------------------
-// возвращает true, если курсор над крестиком
+// ----------------------------- РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ -----------------------------
+// РІРѕР·РІСЂР°С‰Р°РµС‚ true, РµСЃР»Рё РєСѓСЂСЃРѕСЂ РЅР°Рґ РєСЂРµСЃС‚РёРєРѕРј
 static bool draw_close(Renderer &R, int cx, int cy, int x, int y) {
     fillrect(R, x, y, 20, 20, rgb(120, 30, 30));
     drawtext(R, "x", x + 5, y + 3, 2, rgb(255, 255, 255));
@@ -96,7 +96,7 @@ static bool draw_close(Renderer &R, int cx, int cy, int x, int y) {
     return over;
 }
 
-// ----------------------------- экраны -----------------------------
+// ----------------------------- СЌРєСЂР°РЅС‹ -----------------------------
 static void render_desktop(Renderer &R, const std::vector<App> &apps, int sel,
                            int cx, int cy, const char *clock, const char *batt,
                            const Settings &S, int &hover) {
@@ -136,13 +136,13 @@ static void render_term(Renderer &R, TermState &T, const char *clock, const char
     draw_statusbar(R, clock, batt, "Terminal");
     int kb_h = 4 * 42 + 34;
     int area_bottom = SCREEN_H - kb_h - 2;
-    // подсказки
+    // РїРѕРґСЃРєР°Р·РєРё
     if (!T.suggestions.empty()) {
         std::string sug;
         for (auto &s : T.suggestions) { sug += s; sug += " "; }
         if ((int)sug.size() > 60) sug = sug.substr(0, 60);
         drawtext(R, sug.c_str(), 8, area_bottom - 40, 2, rgb(140, 220, 255));
-        drawtext(R, "Tab: дополнить", 8, area_bottom - 22, 2, rgb(120, 120, 135));
+        drawtext(R, "Tab: РґРѕРїРѕР»РЅРёС‚СЊ", 8, area_bottom - 22, 2, rgb(120, 120, 135));
     }
     int line_h = 16;
     int maxlines = (area_bottom - STATUS_H - 4) / line_h;
@@ -232,15 +232,15 @@ static void render_calc(Renderer &R, CalcState &C, const char *clock, const char
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
 }
 
-// ----------------------------- настройки -----------------------------
+// ----------------------------- РЅР°СЃС‚СЂРѕР№РєРё -----------------------------
 struct SettingsUI {
     int item = 0;
-    int remap = -1;    // какой пункт переназначаем (-1=нет)
+    int remap = -1;    // РєР°РєРѕР№ РїСѓРЅРєС‚ РїРµСЂРµРЅР°Р·РЅР°С‡Р°РµРј (-1=РЅРµС‚)
     std::vector<std::string> items;
     SettingsUI() {
-        items = { "Кнопка A", "Кнопка B", "Кнопка Start", "Кнопка Select",
-                  "Кнопка Fn", "Вверх", "Вниз", "Влево", "Вправо",
-                  "Размер иконок", "Масштаб клавиатуры", "Лог debug.log" };
+        items = { "РљРЅРѕРїРєР° A", "РљРЅРѕРїРєР° B", "РљРЅРѕРїРєР° Start", "РљРЅРѕРїРєР° Select",
+                  "РљРЅРѕРїРєР° Fn", "Р’РІРµСЂС…", "Р’РЅРёР·", "Р’Р»РµРІРѕ", "Р’РїСЂР°РІРѕ",
+                  "Р Р°Р·РјРµСЂ РёРєРѕРЅРѕРє", "РњР°СЃС€С‚Р°Р± РєР»Р°РІРёР°С‚СѓСЂС‹", "Р›РѕРі debug.log" };
     }
 };
 
@@ -251,26 +251,26 @@ static void render_settings(Renderer &R, SettingsUI &UI, Settings &S, const char
     for (size_t i = 0; i < UI.items.size(); ++i) {
         bool sel = (int)i == UI.item;
         std::string v;
-        if (UI.remap == (int)i) v = "... нажми кнопку";
+        if (UI.remap == (int)i) v = "... РЅР°Р¶РјРё РєРЅРѕРїРєСѓ";
         else if (i <= 8) v = std::to_string(S.btn[i]);
         else if (i == 9) v = std::to_string(S.icon_size);
         else if (i == 10) v = std::to_string(S.kb_scale);
-        else v = S.log_enabled ? "вкл" : "выкл";
+        else v = S.log_enabled ? "РІРєР»" : "РІС‹РєР»";
         std::string line = UI.items[i] + ": " + v;
         if ((int)line.size() > 56) line = line.substr(0, 56);
         drawtext(R, line.c_str(), 8, y + (int)i * 18, 2, sel ? rgb(255, 220, 60) : rgb(220, 220, 220));
         if (sel) fillrect(R, SCREEN_W - 8, y + (int)i * 18, 6, 14, rgb(255, 220, 60));
     }
-    const char *h = "A: изменить  B: back";
+    const char *h = "A: РёР·РјРµРЅРёС‚СЊ  B: back";
     drawtext(R, h, (SCREEN_W - textw(h, 2)) / 2, SCREEN_H - 12, 2, rgb(120, 120, 130));
     if (UI.remap >= 0) {
         fillrect(R, 140, 220, 360, 50, rgb(40, 40, 70));
-        drawtext(R, "Нажми любую кнопку на геймпаде", 156, 232, 2, rgb(255, 255, 255));
-        drawtext(R, "или Start чтобы отменить", 156, 252, 2, rgb(255, 200, 80));
+        drawtext(R, "РќР°Р¶РјРё Р»СЋР±СѓСЋ РєРЅРѕРїРєСѓ РЅР° РіРµР№РјРїР°РґРµ", 156, 232, 2, rgb(255, 255, 255));
+        drawtext(R, "РёР»Рё Start С‡С‚РѕР±С‹ РѕС‚РјРµРЅРёС‚СЊ", 156, 252, 2, rgb(255, 200, 80));
     }
 }
 
-// ----------------------------- ввод -----------------------------
+// ----------------------------- РІРІРѕРґ -----------------------------
 static int gp_btn(Settings &S, int b) {
     for (int i = 0; i < BTN_MAX; ++i) if (S.btn[i] == b) return i;
     return -1;
@@ -301,7 +301,7 @@ int main(int argc, char **argv) {
     S.load();
     S.log("=== r36pda start ===");
 
-    // приложения
+    // РїСЂРёР»РѕР¶РµРЅРёСЏ
     std::vector<App> apps = builtin_apps();
 #ifdef USE_LUA
     for (auto &a : lua_apps()) apps.push_back(a);
@@ -349,7 +349,14 @@ int main(int argc, char **argv) {
 
             case SDL_JOYBUTTONDOWN: {
                 int b = ev.jbutton.button;
-                int act = gp_btn(S, b);   // 0..8 или -1
+                int act = gp_btn(S, b);   // 0..8 РёР»Рё -1
+                bool x_click = false;
+                // РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ: РЅР°Р¶Р°С‚РёРµ A РїСЂРё РєСѓСЂСЃРѕСЂРµ РЅР° РєСЂРµСЃС‚РёРєРµ
+                if (act == BTN_A && mode != M_DESKTOP && mode != M_EXTERNAL) {
+                    x_click = (cx >= SCREEN_W - 40 && cx <= SCREEN_W - 8 &&
+                               cy >= 2 && cy <= 30);
+                }
+                if (x_click) { mode = M_DESKTOP; break; }
                 if (act == BTN_FN) { fn_pressed = true; S.log("Fn down"); break; }
                 if (act == BTN_START && fn_pressed) { running = false; fn_pressed = false; break; }
                 if (fn_pressed) {
@@ -359,7 +366,7 @@ int main(int argc, char **argv) {
                 }
                 if (act < 0) break;
 
-                // настройки: режим переназначения
+                // РЅР°СЃС‚СЂРѕР№РєРё: СЂРµР¶РёРј РїРµСЂРµРЅР°Р·РЅР°С‡РµРЅРёСЏ
                 if (mode == M_SETTINGS && su.remap >= 0) {
                     S.btn[su.remap] = b;
                     su.remap = -1;
@@ -387,7 +394,7 @@ int main(int argc, char **argv) {
                                 SDL_ShowWindow(R.win); SDL_RaiseWindow(R.win);
                             } else {
                                 mode = a.mode; sel = 0;
-                                if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); term.lines.clear(); term.add_line("Введи команду. Tab - дополнение, Select - подсказка."); }
+                                if (mode == M_TERM) { term.kb = Kbd(); term.input.clear(); term.lines.clear(); term.add_line("Р’РІРµРґРё РєРѕРјР°РЅРґСѓ. Tab - РґРѕРїРѕР»РЅРµРЅРёРµ, Select - РїРѕРґСЃРєР°Р·РєР°."); }
                                 if (mode == M_FILES) { files.refresh(); }
                                 if (mode == M_PROC) procs.refresh();
                                 if (mode == M_SYSINFO && !sysinfo_loaded) { sysinfo = sysinfo_lines(); sysinfo_loaded = true; }
@@ -540,7 +547,7 @@ int main(int argc, char **argv) {
         term.pump();
         if (term.exit_requested) { term.exit_requested = false; mode = M_DESKTOP; }
 
-        // Lua скрипт
+        // Lua СЃРєСЂРёРїС‚
 #ifdef USE_LUA
         if (mode == M_SCRIPT) {
             lua_frame();
@@ -553,35 +560,34 @@ int main(int argc, char **argv) {
             break;
         }
 
-        // крестик закрытия в приложениях (кроме рабочего стола)
-        bool close_over = false;
+        // РєСЂРµСЃС‚РёРє Р·Р°РєСЂС‹С‚РёСЏ РІ РїСЂРёР»РѕР¶РµРЅРёСЏС… (РєСЂРѕРјРµ СЂР°Р±РѕС‡РµРіРѕ СЃС‚РѕР»Р°)
         switch (mode) {
         case M_DESKTOP:
             render_desktop(R, apps, sel, cx, cy, clockbuf, battbuf, S, hover);
             break;
         case M_TERM:
             render_term(R, term, clockbuf, battbuf, S);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_FILES:
             render_files(R, files, clockbuf, battbuf);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_SYSINFO:
             render_sysinfo(R, sysinfo, sysinfo_scroll, clockbuf, battbuf);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_PROC:
             render_proc(R, procs, clockbuf, battbuf);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_CALC:
             render_calc(R, calc, clockbuf, battbuf);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         case M_SETTINGS:
             render_settings(R, su, S, clockbuf, battbuf);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
 #ifdef USE_LUA
         case M_SCRIPT: {
@@ -594,7 +600,7 @@ int main(int argc, char **argv) {
                 drawtext(R, s.c_str(), 8, y + (int)i * 16, 2, rgb(220, 220, 220));
             }
             draw_cursor(R, cx, cy);
-            close_over = draw_close(R, cx, cy, SCREEN_W - 28, 2);
+            draw_close(R, cx, cy, SCREEN_W - 28, 2);
             break;
         }
 #endif
@@ -603,13 +609,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        // A по крестику = выход из приложения
-        if (close_over && (mode == M_TERM || mode == M_FILES || mode == M_SYSINFO ||
-                           mode == M_PROC || mode == M_CALC || mode == M_SETTINGS
-#ifdef USE_LUA
-                           || mode == M_SCRIPT
-#endif
-                           )) mode = M_DESKTOP;
+        // A РїРѕ РєСЂРµСЃС‚РёРєСѓ = РІС‹С…РѕРґ РёР· РїСЂРёР»РѕР¶РµРЅРёСЏ (РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ РІ SDL_JOYBUTTONDOWN)
 
         SDL_UnlockTexture(R.fb);
         SDL_RenderCopy(R.ren, R.fb, nullptr, nullptr);

@@ -69,15 +69,15 @@ static void draw_keyboard(Renderer &R, const Kbd &kb, int y0, const Settings &S)
             drawtext(R, b, x + (kw - textw(b, s)) / 2, y + (kh - 7 * s) / 2, s, sel ? rgb(0,0,0) : rgb(230,230,230));
         }
     }
-    int fx[7] = { 4, 100, 196, 292, 380, 478, 566 };
+    int fx[7] = { 4, 94, 184, 274, 364, 454, 544 };
     for (int c = 0; c < 7; ++c) {
         int x = fx[c];
         int y = y0 + 4 + 4 * (kh + 4);
         bool sel = kb.row == 4 && kb.col == c;
         Uint32 col = sel ? rgb(255, 220, 60) : rgb(70, 70, 95);
-        fillrect(R, x, y, 90, kh, col);
+        fillrect(R, x, y, 86, kh, col);
         const char *t = KB_FUNC[c];
-        drawtext(R, t, x + (90 - textw(t, 2)) / 2, y + (kh - 14) / 2, 2, sel ? rgb(0,0,0) : rgb(230,230,230));
+        drawtext(R, t, x + (86 - textw(t, 2)) / 2, y + (kh - 14) / 2, 2, sel ? rgb(0,0,0) : rgb(230,230,230));
     }
 }
 
